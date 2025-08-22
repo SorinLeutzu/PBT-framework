@@ -67,10 +67,3 @@ nextpcg64 !state =
       xorshifted = fromIntegral (((state `shiftR` 18) `xor` state) `shiftR` 27)
       rot = fromIntegral (state `shiftR` 59)
    in (xorshifted `shiftR` rot) .|. (xorshifted `shiftL` ((-rot) .&. 31))
-
-nextState =
-  let functionName = randomGenFunction
-   in case functionName of
-        "nextXor" -> nextXor
-        "MersenneTwister" -> nextMersenne
-        other -> nextXor -- default PRNG function
