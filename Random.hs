@@ -2,100 +2,127 @@ module Random where
 
 import BitOps (shiftL, shiftR)
 import Control.Monad
-import Data.Bits (Bits (xor))
+import Data.Bits (xor, (.&.))
 import Data.Word qualified as W
 import Next
 import Sorting (sort)
-
-newtype Random = Random W.Word64 deriving (Show)
 
 newtype Rnd g a = Rnd (g -> (a, g))
 
 type Gen a = Rnd Random a
 
-runRandom :: (RandomSeed s) => s -> Rnd s a -> a
+runRandom :: (RandomGen s) => s -> Rnd s a -> a
 runRandom seed (Rnd f) = fst $ f seed
 
-evalRandom :: (RandomSeed s) => s -> Rnd s a -> s
+evalRandom :: (RandomGen s) => s -> Rnd s a -> s
 evalRandom seed (Rnd f) = snd $ f seed
 
-execRandom :: (RandomSeed s) => s -> Rnd s a -> (a, s)
+execRandom :: (RandomGen s) => s -> Rnd s a -> (a, s)
 execRandom seed (Rnd f) = f seed
 
-varyRandom :: Random -> Int -> Random
-varyRandom (Random r) v = Random $ (iterate nextState r) !! v
+class RandomGen a where
+  seed :: a
+  nextState :: a -> (W.Word64, a)
 
-class RandomSeed a where
-  newSeed :: a
+newtype Random = Random W.Word64 deriving (Show, Eq)
 
-instance RandomSeed Random where
-  newSeed = newRandom 0x248729837123
+newtype RandomXor = RandomXor W.Word64 deriving (Show, Eq)
+
+newtype RandomMersenne = RandomMersenne W.Word64 deriving (Show, Eq)
+
+newtype RandomPcg = RandomPcg W.Word64 deriving (Show, Eq)
+
+seedXor, seedMers, seedPcg, seedDefault :: W.Word64
+seedXor = 0x248729837123
+seedMers = 0x34347676
+seedPcg = 0x84923767
+seedDefault = 0x123456789ABCDEF0
+
+instance RandomGen Random where
+  seed = Random seedDefault
+  nextState (Random s) =
+    let w' = nextXor s
+     in (w', Random w')
+
+instance RandomGen RandomXor where
+  seed = RandomXor seedXor
+  nextState (RandomXor s) =
+    let w' = nextXor s
+     in (w', RandomXor w')
+
+instance RandomGen RandomMersenne where
+  seed = RandomMersenne seedMers
+  nextState (RandomMersenne s) =
+    let w' = nextMersenne s
+     in (w', RandomMersenne w')
+
+instance RandomGen RandomPcg where
+  seed = RandomPcg seedPcg
+  nextState (RandomPcg s) =
+    let w' = nextpcg64 s
+     in (w', RandomPcg w')
 
 instance Functor (Rnd g) where
   fmap f (Rnd a) = Rnd $ \s ->
-    let (v, seed) = a s
-     in (f v, seed)
+    let (v, s') = a s
+     in (f v, s')
 
-instance (RandomSeed g) => Applicative (Rnd g) where
+instance Applicative (Rnd g) where
   pure a = Rnd $ \s -> (a, s)
   (Rnd f) <*> (Rnd v) = Rnd $ \s ->
-    let (g, seed) = f s
-        (x, seed') = v seed
-     in (g x, seed')
+    let (g, s') = f s
+        (x, s'') = v s'
+     in (g x, s'')
 
-instance (RandomSeed g) => Monad (Rnd g) where
-  return a = Rnd $ \s -> (a, s)
+instance Monad (Rnd g) where
+  return = pure
   (Rnd a) >>= f = Rnd $ \s ->
-    let (b, seed) = a s
+    let (b, s') = a s
         Rnd g = f b
-     in g seed
+     in g s'
 
-newRandom :: W.Word64 -> Random
-newRandom seed = Random seed
+nextDouble :: (RandomGen g) => Rnd g Double
+nextDouble = Rnd $ \g ->
+  let (w, g') = nextState g
+      maxW = fromIntegral (maxBound :: W.Word64) :: Double
+   in (fromIntegral w / maxW, g')
 
-nextDouble :: Rnd Random Double
-nextDouble = Rnd nd
-  where
-    maxW = maxBound :: W.Word64
-    nd (Random w) =
-      (fromIntegral w / fromIntegral maxW, Random $ nextState w)
-
-nextDoubleRange :: Double -> Double -> Rnd Random Double
+nextDoubleRange :: (RandomGen g) => Double -> Double -> Rnd g Double
 nextDoubleRange lo hi = do
   d <- nextDouble
   return $ lo + (hi - lo) * d
 
-nextInt :: Rnd Random Int
-nextInt = Rnd ni
-  where
-    maxW = maxBound :: W.Word64
-    maxI = maxBound :: Int
-    ni (Random w) =
-      (fromIntegral w `div` ((fromIntegral maxW) `div` maxI), Random $ nextState w)
+nextInt :: (RandomGen g) => Rnd g Int
+nextInt = Rnd $ \g ->
+  let (w, g') = nextState g
+      maxI = fromIntegral (maxBound :: Int) :: Integer
+      n = (fromIntegral w :: Integer) `mod` (maxI + 1)
+   in (fromIntegral n, g')
 
-nextIntRange :: Int -> Int -> Rnd Random Int
-nextIntRange lo hi = do
-  n <- nextInt
-  return (lo + n `mod` (hi - lo))
+nextIntRange :: (RandomGen g) => Int -> Int -> Rnd g Int
+nextIntRange lo hi
+  | hi <= lo = return lo
+  | otherwise = do
+      n <- nextInt
+      let range = hi - lo
+       in return (lo + (n `mod` range))
 
-nextBool :: Rnd Random Bool
-nextBool = Rnd ni
-  where
-    ni (Random w) =
-      ((fromIntegral w :: Int) `div` 2 == 0, Random $ nextState w)
+nextBool :: (RandomGen g) => Rnd g Bool
+nextBool = Rnd $ \g ->
+  let (w, g') = nextState g
+   in ((w .&. 1) == 1, g')
 
-nextPositiveInt :: Rnd Random Int
+nextPositiveInt :: (RandomGen g) => Rnd g Int
 nextPositiveInt = nextIntRange 0 maxBound
 
-randomSample :: a -> [a] -> Rnd Random a
-randomSample a [] = return a
-randomSample a as = do
-  let l = length as + 1
-  idx <- nextIntRange 0 l
-  return $ (a : as) !! idx
+randomSample :: (RandomGen g) => a -> [a] -> Rnd g a
+randomSample def [] = return def
+randomSample def as = do
+  idx <- nextIntRange 0 (length as)
+  return $ as !! idx
 
 class Arbitrary a where
-  arbitrary :: Rnd Random a
+  arbitrary :: Gen a
 
 instance Arbitrary Int where
   arbitrary = nextInt
@@ -112,31 +139,14 @@ instance (Arbitrary a) => Arbitrary [a] where
 
 instance Arbitrary Char where
   arbitrary = do
-    randomSample minBound (enumFromTo (succ minBound) maxBound)
+    let allChars = enumFromTo (minBound :: Char) (maxBound :: Char)
+    randomSample (head allChars) allChars
 
 instance (Arbitrary a, Arbitrary b) => Arbitrary (a, b) where
-  arbitrary = liftM2 (,) arbitrary arbitrary
+  arbitrary = (,) <$> arbitrary <*> arbitrary
 
 instance (Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (a, b, c) where
-  arbitrary = liftM3 (,,) arbitrary arbitrary arbitrary
-
--- >>> runRandom newSeed nextInt
--- -40162935664931
-
--- >>> runRandom newSeed (arbitrary :: Rnd Random (Bool, Bool))
--- (False,False)
-
--- >>> runRandom newSeed (arbitrary :: Rnd Random (Bool, Int, Int))
--- (True,7319755751108929560,-666014613197512405)
-
--- >>> runRandom newSeed (arbitrary :: Rnd Random String)
--- "\682008\114765\524432\718999\1089677\121380\546552\388395"
-
--- >>> runRandom newSeed (arbitrary :: Rnd Random [Int])
--- [7319755751108929560,7047238280003502157,6285911605709176976,-288376996935305065,6381265667147014285,-2312468355179750876,3304438790729783032,5126308203624262955]
-
--- >>> runRandom newSeed (arbitrary :: Rnd Random [SmallInt])
--- [7319755751108929560,7047238280003502157,6285911605709176976,-288376996935305065,6381265667147014285,-2312468355179750876,3304438790729783032,5126308203624262955]
+  arbitrary = (,,) <$> arbitrary <*> arbitrary <*> arbitrary
 
 newtype SmallInt = SmallInt {getSmallInt :: Int} deriving (Eq, Ord)
 
@@ -155,8 +165,8 @@ newtype PrintableString = PrintableString {getPrintableString :: String} derivin
 
 instance Arbitrary PrintableString where
   arbitrary = do
-    printableChrs <- (arbitrary :: Rnd Random [PrintableChar])
-    return $ PrintableString (getPrintableChar <$> printableChrs)
+    printableChrs <- (arbitrary :: Gen [PrintableChar])
+    return $ PrintableString (map getPrintableChar printableChrs)
 
 instance Show PrintableString where
   show (PrintableString s) = show s
@@ -170,8 +180,8 @@ newtype AlphaNumString = AlphaNumString {getAlphaNumString :: String} deriving (
 
 instance Arbitrary AlphaNumString where
   arbitrary = do
-    printableChrs <- (arbitrary :: Rnd Random [AlphaNumChar])
-    return $ AlphaNumString (getAlphaNumChar <$> printableChrs)
+    printableChrs <- (arbitrary :: Gen [AlphaNumChar])
+    return $ AlphaNumString (map getAlphaNumChar printableChrs)
 
 instance Show AlphaNumString where
   show (AlphaNumString s) = show s
@@ -179,8 +189,7 @@ instance Show AlphaNumString where
 newtype SortedList a = SortedList {getSortedList :: [a]} deriving (Eq, Ord)
 
 instance (Arbitrary a, Ord a) => Arbitrary (SortedList a) where
-  arbitrary = do
-    SortedList . sort <$> (arbitrary :: Gen [a])
+  arbitrary = SortedList . sort <$> (arbitrary :: Gen [a])
 
 instance (Show a) => Show (SortedList a) where
   show (SortedList l) = show l
