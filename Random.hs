@@ -3,6 +3,8 @@ module Random where
 import BitOps (shiftL, shiftR)
 import Control.Monad
 import Data.Bits (xor, (.&.))
+import Data.Char
+import Data.List (nub)
 import Data.Word qualified as W
 import Next
 import Sorting (sort)
@@ -123,12 +125,16 @@ randomSample def as = do
 
 class Arbitrary a where
   arbitrary :: Gen a
+  shrink :: a -> [a]
+  shrink _ = []
 
 instance Arbitrary Int where
   arbitrary = nextInt
+  shrink = shrinkIntStd
 
 instance Arbitrary Bool where
   arbitrary = nextBool
+  shrink = shrinkBool
 
 instance (Arbitrary a) => Arbitrary [a] where
   arbitrary = do
@@ -193,3 +199,55 @@ instance (Arbitrary a, Ord a) => Arbitrary (SortedList a) where
 
 instance (Show a) => Show (SortedList a) where
   show (SortedList l) = show l
+
+-- works by halving the parameter value consecutevely
+shrinkIntStd :: Int -> [Int]
+shrinkIntStd 0 = []
+shrinkIntStd x = takeWhile (/= 0) $ iterate (`div` 2) x
+
+sgn x
+  | x < 0 = -1
+  | x == 0 = 0
+  | x > 0 = 1
+
+log2 :: Int -> Int
+log2 x | x >= 0 && x < 2 = 0
+log2 x
+  | x >= 2 = exp2 1 0 x
+  | x < 0 = sgn x * exp2 1 0 (x `div` sgn x)
+
+exp2 :: Int -> Int -> Int -> Int
+exp2 acc power upperBound
+  | acc < upperBound = exp2 (acc * 2) (power + 1) upperBound
+  | otherwise = power
+
+-- works by taking the base 2 logarithm consecutively
+shrinkIntAgg :: Int -> [Int]
+shrinkIntAgg 0 = []
+shrinkIntAgg x = takeWhile (/= 0) $ iterate log2 x
+
+shrinkBool :: Bool -> [Bool]
+shrinkBool True = [False]
+shrinkBool False = []
+
+-- shrinks lists by removing power of 2 elements
+shrinkListStd :: (a -> [a]) -> [a] -> [[a]]
+shrinkListStd shrinkFunction list = map shrinkFunction $ standardRemoval list 1
+
+-- standardRemoval :: [a] -> Int -> [[a]]
+-- standardRemoval list acc =
+
+-- shrinks list by halving the list until the list is 10 elements or less
+-- then generates all combinations and chooses the shortest
+-- shrinkListAgg :: (a -> [a]) -> [a] -> [[a]]
+-- shrinkListAgg shrinkingFunction list = map shrinkingFunction (reduceSize list ++ orderSublists list)
+
+reduceSize :: [a] -> [[a]]
+reduceSize list =
+  let halvedListLen = length list `div` 2
+   in if (length list > 10)
+        then take halvedListLen list : reduceSize (take halvedListLen list)
+        else []
+
+orderedSublists :: [a] -> [[a]]
+orderedSublists list = [[]] -- TODO
