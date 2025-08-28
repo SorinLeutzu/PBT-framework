@@ -231,23 +231,40 @@ shrinkBool True = [False]
 shrinkBool False = []
 
 -- shrinks lists by removing power of 2 elements
-shrinkListStd :: (a -> [a]) -> [a] -> [[a]]
-shrinkListStd shrinkFunction list = map shrinkFunction $ standardRemoval list 1
+shrinkListStd :: (a -> [a]) -> [a] -> Int -> [[a]]
+shrinkListStd shrinkingFunction list acc
+  | acc > length list = []
+  | otherwise =
+      let remainingList = drop acc list
+          shrinkedRemainingList = map (!! 1) (map shrinkingFunction remainingList)
+       in remainingList : shrinkedRemainingList : shrinkListStd shrinkingFunction shrinkedRemainingList (acc * 2)
 
--- standardRemoval :: [a] -> Int -> [[a]]
--- standardRemoval list acc =
+-- t = take 8 (shrinkListStd shrinkIntStd [200, 300, 400, 500, 600, 700] 1)
 
 -- shrinks list by halving the list until the list is 10 elements or less
 -- then generates all combinations and chooses the shortest
 -- shrinkListAgg :: (a -> [a]) -> [a] -> [[a]]
--- shrinkListAgg shrinkingFunction list = map shrinkingFunction (reduceSize list ++ orderSublists list)
+-- shrinkListAgg shrinkingFunction list = reduceSize shrinkingFunction list ++ (orderedSublists shrinkingFunction [list])
 
-reduceSize :: [a] -> [[a]]
-reduceSize list =
+reduceSize :: (a -> [a]) -> [a] -> [[a]]
+reduceSize shrinkingFunction list =
   let halvedListLen = length list `div` 2
-   in if (length list > 10)
-        then take halvedListLen list : reduceSize (take halvedListLen list)
-        else []
+      remainingList = take halvedListLen list
+      shrinkedRemainingList = map (!! 1) (map shrinkingFunction remainingList)
+   in if (length list > 2)
+        then remainingList : shrinkedRemainingList : reduceSize shrinkingFunction shrinkedRemainingList
+        else [list]
 
-orderedSublists :: [a] -> [[a]]
-orderedSublists list = [[]] -- TODO
+dropOneElLeftAndRight :: [a] -> [[a]]
+dropOneElLeftAndRight list = init list : [tail list]
+
+applyDropOneElLeftAndRight :: [[a]] -> [[a]]
+applyDropOneElLeftAndRight list = concat (map dropOneElLeftAndRight list)
+
+orderedSublists :: (Eq a) => [[a]] -> [[a]]
+orderedSublists list
+  | length (last list) == 1 = list
+  | otherwise =
+      let subListsOfSameLength = applyDropOneElLeftAndRight list
+          shorterSublists = orderedSublists subListsOfSameLength
+       in nub (subListsOfSameLength ++ shorterSublists)
