@@ -1,127 +1,109 @@
-module Random where
+{-# LANGUAGE LambdaCase #-}
+
+module Random
+  ( shrinkIntStd,
+    shrinkListStd,
+  )
+where
 
 import BitOps (shiftL, shiftR)
-import Control.Monad
+import Control.Monad ()
+import Control.Monad.State
+  ( MonadState (get, put),
+    State,
+    evalState,
+    execState,
+    runState,
+  )
 import Data.Bits (xor, (.&.))
-import Data.Char
+import Data.Char ()
 import Data.List (nub)
 import Data.Word qualified as W
-import Next
+import Next (nextMersenne, nextXor, nextpcg64)
 import Sorting (sort)
 
-newtype Rnd g a = Rnd (g -> (a, g))
+data PRNG
+  = PRNG_Xor W.Word64
+  | PRNG_Mersenne W.Word64
+  | PRNG_Pcg W.Word64
+  deriving (Show, Eq)
 
-type Gen a = Rnd Random a
-
-runRandom :: (RandomGen s) => s -> Rnd s a -> a
-runRandom seed (Rnd f) = fst $ f seed
-
-evalRandom :: (RandomGen s) => s -> Rnd s a -> s
-evalRandom seed (Rnd f) = snd $ f seed
-
-execRandom :: (RandomGen s) => s -> Rnd s a -> (a, s)
-execRandom seed (Rnd f) = f seed
-
-class RandomGen a where
-  seed :: a
-  nextState :: a -> (W.Word64, a)
-
-newtype Random = Random W.Word64 deriving (Show, Eq)
-
-newtype RandomXor = RandomXor W.Word64 deriving (Show, Eq)
-
-newtype RandomMersenne = RandomMersenne W.Word64 deriving (Show, Eq)
-
-newtype RandomPcg = RandomPcg W.Word64 deriving (Show, Eq)
-
-seedXor, seedMers, seedPcg, seedDefault :: W.Word64
+seedXor, seedMersenne, seedPcg :: W.Word64
 seedXor = 0x248729837123
-seedMers = 0x34347676
+seedMersenne = 0x34347676
 seedPcg = 0x84923767
-seedDefault = 0x123456789ABCDEF0
 
-instance RandomGen Random where
-  seed = Random seedDefault
-  nextState (Random s) =
+nextPRNG :: PRNG -> (W.Word64, PRNG)
+nextPRNG = \case
+  PRNG_Xor s ->
     let w' = nextXor s
-     in (w', Random w')
-
-instance RandomGen RandomXor where
-  seed = RandomXor seedXor
-  nextState (RandomXor s) =
-    let w' = nextXor s
-     in (w', RandomXor w')
-
-instance RandomGen RandomMersenne where
-  seed = RandomMersenne seedMers
-  nextState (RandomMersenne s) =
+     in (w', PRNG_Xor w')
+  PRNG_Mersenne s ->
     let w' = nextMersenne s
-     in (w', RandomMersenne w')
-
-instance RandomGen RandomPcg where
-  seed = RandomPcg seedPcg
-  nextState (RandomPcg s) =
+     in (w', PRNG_Mersenne w')
+  PRNG_Pcg s ->
     let w' = nextpcg64 s
-     in (w', RandomPcg w')
+     in (w', PRNG_Pcg w')
 
-instance Functor (Rnd g) where
-  fmap f (Rnd a) = Rnd $ \s ->
-    let (v, s') = a s
-     in (f v, s')
+type Rnd a = State PRNG a
 
-instance Applicative (Rnd g) where
-  pure a = Rnd $ \s -> (a, s)
-  (Rnd f) <*> (Rnd v) = Rnd $ \s ->
-    let (g, s') = f s
-        (x, s'') = v s'
-     in (g x, s'')
+type Gen a = Rnd a
 
-instance Monad (Rnd g) where
-  return = pure
-  (Rnd a) >>= f = Rnd $ \s ->
-    let (b, s') = a s
-        Rnd g = f b
-     in g s'
+runRandom :: PRNG -> Rnd a -> a
+runRandom = flip evalState
 
-nextDouble :: (RandomGen g) => Rnd g Double
-nextDouble = Rnd $ \g ->
-  let (w, g') = nextState g
-      maxW = fromIntegral (maxBound :: W.Word64) :: Double
-   in (fromIntegral w / maxW, g')
+evalRandom :: PRNG -> Rnd a -> PRNG
+evalRandom = flip execState
 
-nextDoubleRange :: (RandomGen g) => Double -> Double -> Rnd g Double
+execRandom :: PRNG -> Rnd a -> (a, PRNG)
+execRandom = flip runState
+
+nextWord64 :: Rnd W.Word64
+nextWord64 = do
+  prng <- get
+  let (w, prng') = nextPRNG prng
+  put prng'
+  pure w
+
+nextDouble :: Rnd Double
+nextDouble = do
+  w <- nextWord64
+  let maxW = fromIntegral (maxBound :: W.Word64) :: Double
+  pure (fromIntegral w / maxW)
+
+nextDoubleRange :: Double -> Double -> Rnd Double
 nextDoubleRange lo hi = do
   d <- nextDouble
-  return $ lo + (hi - lo) * d
+  pure (lo + (hi - lo) * d)
 
-nextInt :: (RandomGen g) => Rnd g Int
-nextInt = Rnd $ \g ->
-  let (w, g') = nextState g
-      maxI = fromIntegral (maxBound :: Int) :: Integer
+nextInt :: Rnd Int
+nextInt = do
+  w <- nextWord64
+  let maxI = fromIntegral (maxBound :: Int) :: Integer
       n = (fromIntegral w :: Integer) `mod` (maxI + 1)
-   in (fromIntegral n, g')
+  pure (fromIntegral n)
 
-nextIntRange :: (RandomGen g) => Int -> Int -> Rnd g Int
+nextIntRange :: Int -> Int -> Rnd Int
 nextIntRange lo hi
-  | hi <= lo = return lo
+  | hi <= lo = pure lo
   | otherwise = do
       n <- nextInt
       let range = hi - lo
-       in return (lo + (n `mod` range))
+       in pure (lo + (n `mod` range))
 
-nextBool :: (RandomGen g) => Rnd g Bool
-nextBool = Rnd $ \g ->
-  let (w, g') = nextState g
-   in ((w .&. 1) == 1, g')
+nextBool :: Rnd Bool
+nextBool = do
+  w <- nextWord64
+  pure ((w .&. 1) == 1)
 
-nextPositiveInt :: (RandomGen g) => Rnd g Int
+nextPositiveInt :: Rnd Int
 nextPositiveInt = nextIntRange 0 maxBound
 
-randomSample :: (RandomGen g) => a -> [a] -> Rnd g a
-randomSample def [] = return def
+randomSample :: a -> [a] -> Rnd a
+randomSample def [] = pure def
 randomSample def as = do
   idx <- nextIntRange 0 (length as)
-  return $ as !! idx
+  pure (as !! idx)
 
 class Arbitrary a where
   arbitrary :: Gen a
