@@ -1,10 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Random
-  ( shrinkIntStd,
-    shrinkListStd,
-  )
-where
+module Random where
 
 import BitOps (shiftL, shiftR)
 import Control.Monad ()
