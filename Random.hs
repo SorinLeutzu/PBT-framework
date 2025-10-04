@@ -12,7 +12,7 @@ import Control.Monad.State
     runState,
   )
 import Data.Bits (xor, (.&.))
-import Data.Char ()
+import Data.Coerce (coerce)
 import Data.List (nub)
 import Data.Word qualified as W
 import Next (nextMersenne, nextXor, nextpcg64)
@@ -120,30 +120,54 @@ instance (Arbitrary a) => Arbitrary [a] where
     if i > 0
       then (:) <$> arbitrary <*> arbitrary
       else return []
+  shrink list = shrinkListStd shrinkElem list 1
+    where
+      shrinkElem :: a -> [a]
+      shrinkElem = shrink
 
 instance Arbitrary Char where
   arbitrary = do
     let allChars = enumFromTo (minBound :: Char) (maxBound :: Char)
     randomSample (head allChars) allChars
+  shrink x = printableChars
 
 instance (Arbitrary a, Arbitrary b) => Arbitrary (a, b) where
   arbitrary = (,) <$> arbitrary <*> arbitrary
+  shrink (left, right) = zip (shrink left) (shrink right)
 
 instance (Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (a, b, c) where
   arbitrary = (,,) <$> arbitrary <*> arbitrary <*> arbitrary
+  shrink (left, middle, right) = zip3 (shrink left) (shrink middle) (shrink right)
 
-newtype SmallInt = SmallInt {getSmallInt :: Int} deriving (Eq, Ord)
+newtype SmallInt = SmallInt {getSmallInt :: Int} deriving (Eq, Ord, Enum, Real, Num, Integral)
 
 instance Arbitrary SmallInt where
   arbitrary = SmallInt <$> nextIntRange 0 100
+  shrink = shrinkIntStd
 
 instance Show SmallInt where
   show (SmallInt i) = show i
 
 newtype PrintableChar = PrintableChar {getPrintableChar :: Char} deriving (Eq)
 
+lowercaseLetters = ['a' .. 'z']
+
+uppercaseLetters = ['A' .. 'Z']
+
+digits = ['0' .. '9']
+
+specialPrintableCharacters = " !@#$%^&*()_+-=[]{}"
+
+printableChars = lowercaseLetters ++ uppercaseLetters ++ digits ++ specialPrintableCharacters
+
+shrinkPrintableChar x = map PrintableChar printableChars
+
+shrinkAlphaNumChar x = map AlphaNumChar alphaNumChars
+
 instance Arbitrary PrintableChar where
-  arbitrary = PrintableChar <$> randomSample 'a' (['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ " !@#$%^&*()_+-=[]{}")
+  arbitrary = PrintableChar <$> randomSample 'a' printableChars
+
+  shrink (PrintableChar c) = shrinkPrintableChar c
 
 newtype PrintableString = PrintableString {getPrintableString :: String} deriving (Eq)
 
@@ -151,14 +175,18 @@ instance Arbitrary PrintableString where
   arbitrary = do
     printableChrs <- (arbitrary :: Gen [PrintableChar])
     return $ PrintableString (map getPrintableChar printableChrs)
+  shrink (PrintableString s) = coerce (shrinkString shrinkPrintableChar (coerce s :: [PrintableChar])) :: [PrintableString]
 
 instance Show PrintableString where
   show (PrintableString s) = show s
 
 newtype AlphaNumChar = AlphaNumChar {getAlphaNumChar :: Char} deriving (Eq)
 
+alphaNumChars = ['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9']
+
 instance Arbitrary AlphaNumChar where
-  arbitrary = AlphaNumChar <$> randomSample 'a' (['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'])
+  arbitrary = AlphaNumChar <$> randomSample 'a' alphaNumChars
+  shrink = shrinkAlphaNumChar
 
 newtype AlphaNumString = AlphaNumString {getAlphaNumString :: String} deriving (Eq)
 
@@ -166,6 +194,7 @@ instance Arbitrary AlphaNumString where
   arbitrary = do
     printableChrs <- (arbitrary :: Gen [AlphaNumChar])
     return $ AlphaNumString (map getAlphaNumChar printableChrs)
+  shrink (AlphaNumString s) = coerce (shrinkString shrinkAlphaNumChar (coerce s :: [AlphaNumChar])) :: [AlphaNumString]
 
 instance Show AlphaNumString where
   show (AlphaNumString s) = show s
@@ -174,12 +203,16 @@ newtype SortedList a = SortedList {getSortedList :: [a]} deriving (Eq, Ord)
 
 instance (Arbitrary a, Ord a) => Arbitrary (SortedList a) where
   arbitrary = SortedList . sort <$> (arbitrary :: Gen [a])
+  shrink (SortedList list) = map SortedList (shrinkListStd shrinkElem list 1)
+    where
+      shrinkElem :: a -> [a]
+      shrinkElem = shrink
 
 instance (Show a) => Show (SortedList a) where
   show (SortedList l) = show l
 
 -- works by halving the parameter value consecutevely
-shrinkIntStd :: Int -> [Int]
+-- shrinkIntStd :: Int -> [Int]
 shrinkIntStd 0 = []
 shrinkIntStd x = takeWhile (/= 0) $ iterate (`div` 2) x
 
@@ -246,3 +279,12 @@ orderedSublists list
       let subListsOfSameLength = applyDropOneElLeftAndRight list
           shorterSublists = orderedSublists subListsOfSameLength
        in nub (subListsOfSameLength ++ shorterSublists)
+
+shrinkString :: (a -> [a]) -> [a] -> [[a]]
+shrinkString shrinkingCharFunction list
+  | length list <= 1 = [[]]
+  | otherwise =
+      let firstHalfList = take ((length list) `div` 2) list
+          secondHalfList = drop ((length list) `div` 2) list
+          shrunkList = head (map shrinkingCharFunction secondHalfList)
+       in shrunkList : firstHalfList : shrinkString shrinkingCharFunction firstHalfList
