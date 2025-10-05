@@ -19,7 +19,9 @@ where
 
 -- Checks if a string contains a particular string
 containsString _ [] = False
-containsString string text@(t : ts) = if (startsWithString string text) then True else (containsString string ts)
+containsString string text@(t : ts)
+  | startsWithString string text = True
+  | otherwise = containsString string ts
 
 -- Checks if a string starts with a particular string
 startsWithString [] _ = True
@@ -27,6 +29,9 @@ startsWithString _ [] = False
 startsWithString string@(s : ss) text@(t : ts)
   | t == s = startsWithString ss ts
   | t /= s = False
+
+-- checks if a string ends with a particular string
+endsWithString string text = startsWithString (reverse string) (reverse text)
 
 -- Mathcer typeclass
 class Matcher m a | m -> a where
@@ -54,15 +59,30 @@ instance (Eq a, Show a) => Matcher (EqMatcher a) a where
     | otherwise = "is not equal to " ++ show act
 
 -- Comparison Mathcer
+-- Greater than
 newtype GtMatcher a = GtMatcher a
 
 instance (Ord a, Show a) => Matcher (GtMatcher a) a where
-  matches (GtMatcher higher) lower = higher > lower
-  describe (GtMatcher higher) ok
-    | ok = "is greater than " ++ show higher
-    | otherwise = "id not greater than " ++ show higher
+  matches (GtMatcher lower) higher = lower < higher
+  describe (GtMatcher lower) ok
+    | ok = "is greater than " ++ show lower
+    | otherwise = "is not greater than " ++ show lower
 
--- Contains matcher
+-- Less than
+newtype LtMatcher a = LtMatcher a
+
+instance (Ord a, Show a) => Matcher (LtMatcher a) a where
+  matches (LtMatcher higher) lower = lower < higher
+  describe (LtMatcher higher) ok
+    | ok = "is less than " ++ show higher
+    | otherwise = "is not greater than" ++ show higher
+
+-- Between Matcher
+data BetweenMatcher a = BetweenMatcher a a
+
+betweenMatcher low high = (LtMatcher high) `And` (GtMatcher low)
+
+-- Contains string matcher
 newtype ContainsMatcher = ContainsMatcher String
 
 instance Matcher ContainsMatcher String where
@@ -73,6 +93,56 @@ instance Matcher ContainsMatcher String where
   explainMatch (ContainsMatcher string) text
     | matches (ContainsMatcher string) text = "which contains \"" ++ string ++ "\" in \"" ++ text ++ "\""
     | otherwise = "which does not contain \"" ++ string ++ "\" in \"" ++ text ++ "\""
+
+-- Starts with string matcher
+newtype StartsWithMatcher = StartsWithMatcher String
+
+instance Matcher StartsWithMatcher String where
+  matches (StartsWithMatcher string) text = startsWithString string text
+  describe (StartsWithMatcher string) ok
+    | ok = "starts with " ++ show string
+    | otherwise = " does not start with " ++ show string
+
+-- Ends with string matcher
+newtype EndsWithMatcher = EndsWithMatcher String
+
+instance Matcher EndsWithMatcher String where
+  matches (EndsWithMatcher string) text = endsWithString string text
+  describe (EndsWithMatcher string) ok
+    | ok = "ends with " ++ show string
+    | otherwise = " does not end with " ++ show string
+
+-- Increasing list matcher
+data IncreasingList a = IncreasingList
+
+instance (Ord a, Show a) => Matcher (IncreasingList a) [a] where
+  matches IncreasingList list = isIncreasingList list
+    where
+      isIncreasingList [] = True
+      isIncreasingList (x : y : xs)
+        | x < y = isIncreasingList (y : xs)
+        | otherwise = False
+      isIncreasingList _ = True
+  describe IncreasingList ok
+    | ok = " is strictly increasing"
+    | otherwise = "is not strictly increasing"
+  explainMatch _ list = explainMatchHelper 0 1 list
+
+explainMatcher _ _ [] = "which is strictly increasing"
+
+explainMatchHelper pos1 pos2 (x : y : xs)
+  | matches (GtMatcher x) y = explainMatchHelper (pos1 + 1) (pos2 + 1) (y : xs)
+  | otherwise = "which is not strictly increasing because the elements at positions " ++ show pos1 ++ " and " ++ show pos2 ++ " do not respect the following " ++ show y ++ " " ++ explainMatch (GtMatcher x) y
+explainMatchHelper _ _ _ = " which is strictly increasing "
+
+-- contains elem
+newtype ContainsElem a = ContainsElem a
+
+instance (Eq a, Show a) => Matcher (ContainsElem a) [a] where
+  matches (ContainsElem e) list = e `elem` list
+  describe (ContainsElem e) ok
+    | ok = "contains elemenent " ++ show e
+    | otherwise = "does not contain element " ++ show e
 
 eq = EqMatcher
 
