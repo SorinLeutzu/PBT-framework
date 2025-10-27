@@ -26,8 +26,8 @@ data PRNG
 
 seedXor, seedMersenne, seedPcg :: W.Word64
 seedXor = 0x248729837123
-seedMersenne = 0x34347676
-seedPcg = 0x84923767
+seedMersenne = 5489
+seedPcg = 0x853c49e6748fea9b
 
 nextPRNG :: PRNG -> (W.Word64, PRNG)
 nextPRNG = \case
