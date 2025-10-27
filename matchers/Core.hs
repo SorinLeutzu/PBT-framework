@@ -1,7 +1,9 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 
-module Core where
+module Matchers.Core where
+
+import Data.Typeable (Typeable, typeOf)
 
 -- Matcher typeclass
 class Matcher m a | m -> a where
@@ -87,7 +89,7 @@ instance (Ord a, Show a) => Matcher (Idempotence a) a where
       oneTimeApplicationResult = function el
       nTimeApplicationResult = iterate function el !! times
   describe (Idempotence f n) ok
-    | ok = " Is idempotent"
+    | ok = " Is idempotent on " ++ show n ++ " applications "
     | otherwise = "Is not idempotent"
 
 -- Invertibility: Applying an operation and its inverse is the original value
@@ -102,20 +104,29 @@ instance (Ord a, Show a, Ord b, Show b) => Matcher (Invertibility a b) a where
 -- Associativity
 data Associativity a = Associativity (a -> a -> a)
 
-instance (Ord a, Show a) => Matcher (Associativity a) (a, a, a) where
+instance (Ord a, Show a, Typeable a) => Matcher (Associativity a) (a, a, a) where
   matches (Associativity f) (x, y, z) = f x (f y z) == f (f x y) z
   describe (Associativity f) ok
-    | ok = ""
-    | otherwise = ""
+    | ok = "Function " ++ show (typeOf f) ++ "is associative on "
+    | otherwise = "Function " ++ show (typeOf f) ++ "is NOT associative on "
 
 -- Commutativity
--- data Commutativity a = Commutativity (a -> a -> a)
--- instance (Ord a,Show a) => Matcher (Commutativity a) (a,a) where
---   matches (Commutativity f) (x,y) = x `f` y  == y `f` x
+data Commutativity a = Commutativity (a -> a -> a)
 
--- -- Distributivity
--- data Distributivity a = Distributivity (a -> a -> a)
--- instance (Ord a,Show a) => Matcher (Distributivity a) (a,a,a)
+instance (Ord a, Show a, Typeable a) => Matcher (Commutativity a) (a, a) where
+  matches (Commutativity f) (x, y) = x `f` y == y `f` x
+  describe (Commutativity f) ok
+    | ok = "Function " ++ show (typeOf f) ++ " is commutative on"
+    | otherwise = "Function " ++ show (typeOf f) ++ " is NOT commutative on"
+
+-- Distributivity
+data Distributivity a = Distributivity (a -> a -> a) (a -> a -> a)
+
+instance (Ord a, Show a, Typeable a) => Matcher (Distributivity a) (a, a, a) where
+  matches (Distributivity plus times) (x, y, z) = x `times` (y `plus` z) == (x `times` y) `plus` (x `times` z) && (y `plus` z) `times` x == (y `times` x) `plus` (z `times` x)
+  describe (Distributivity plus times) ok
+    | ok = "Operation " ++ show (typeOf times) ++ " is distributive on operation " ++ show (typeOf times) ++ " on domain "
+    | otherwise = "Operation " ++ show (typeOf times) ++ " is NOT distributive on operation " ++ show (typeOf times) ++ " on domain "
 
 -- contains elem
 newtype ContainsElem a = ContainsElem a
