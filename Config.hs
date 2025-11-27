@@ -1,8 +1,15 @@
 module Config where
 
--- mergeSort , quickSort
-sortingFunction :: String
-sortingFunction = "mergeSort"
+data ShrinkStrategy = Standard | Aggressive
 
-shrinkStrategy :: String
-shrinkStrategy = "standard"
+shrinkStrategy :: ShrinkStrategy
+shrinkStrategy = Standard
+
+maximumThreadNumber :: Int
+maximumThreadNumber = 5
+
+withColors :: Bool
+withColors = True
+
+withEmojis :: Bool
+withEmojis = True
