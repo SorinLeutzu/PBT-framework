@@ -4,6 +4,7 @@ import Control.Concurrent
 import Control.Concurrent.Chan
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
+import Control.DeepSeq (deepseq, force)
 import Control.Exception (evaluate)
 import Control.Monad (mapM_, replicateM, zipWithM_)
 import Data.IORef
@@ -53,89 +54,160 @@ stats xs =
       md = median s
    in (mn, mx, av, md)
 
+-- 0) Single-threaded (sequential, no threads)
+
+runSingleThreadLazy :: Int -> Int -> IO (Int, Double)
+runSingleThreadLazy n iter = do
+  (sumVals, totalTime) <- timeIt $ do
+    let compute i = heavyCompute iter i -- Lazy: no evaluate, but will be forced by sum
+        vals = map compute [1 .. n]
+        result = sum vals
+    result `deepseq` return result -- Force full evaluation
+  return (sumVals, totalTime)
+
+runSingleThreadEager :: Int -> Int -> IO (Int, Double)
+runSingleThreadEager n iter = do
+  (sumVals, totalTime) <- timeIt $ do
+    let compute i = heavyCompute iter i
+    vals <- mapM (\i -> evaluate (compute i)) [1 .. n] -- Eager: force evaluation
+    let result = sum vals
+    result `deepseq` return result -- Force full evaluation
+  return (sumVals, totalTime)
+
 -- 1) MVar per thread
 
-runWithMVars :: Int -> Int -> IO (Int, [Double], Double)
-runWithMVars n iter = do
-  ((sumVals, times), totalTime) <- timeIt $ do
+runWithMVarsLazy :: Int -> Int -> IO (Int, Double)
+runWithMVarsLazy n iter = do
+  (sumVals, totalTime) <- timeIt $ do
     mvars <- replicateM n newEmptyMVar
     let spawn i mv = forkIO $ do
-          t0 <- getCurrentTime
-          v <- evaluate (heavyCompute iter i)
-          t1 <- getCurrentTime
-          let elapsed = realToFrac (diffUTCTime t1 t0) :: Double
-          putMVar mv (v, elapsed)
+          let v = heavyCompute iter i -- Lazy: no evaluate, but forced when put in MVar
+          putMVar mv v
     zipWithM_ spawn [1 .. n] mvars
-    results <- mapM takeMVar mvars
-    let vals = map fst results
-        tms = map snd results
-    return (sum vals, tms)
-  return (sumVals, times, totalTime)
+    vals <- mapM takeMVar mvars
+    let result = sum vals
+    result `deepseq` return result -- Force final sum
+  return (sumVals, totalTime)
+
+runWithMVarsEager :: Int -> Int -> IO (Int, Double)
+runWithMVarsEager n iter = do
+  (sumVals, totalTime) <- timeIt $ do
+    mvars <- replicateM n newEmptyMVar
+    let spawn i mv = forkIO $ do
+          v <- evaluate (heavyCompute iter i) -- Eager: force evaluation
+          putMVar mv v
+    zipWithM_ spawn [1 .. n] mvars
+    vals <- mapM takeMVar mvars
+    let result = sum vals
+    result `deepseq` return result -- Force final sum
+  return (sumVals, totalTime)
 
 -- 2) Chan
 
-runWithChan :: Int -> Int -> IO (Int, [Double], Double)
-runWithChan n iter = do
-  ((sumVals, times), totalTime) <- timeIt $ do
+runWithChanLazy :: Int -> Int -> IO (Int, Double)
+runWithChanLazy n iter = do
+  (sumVals, totalTime) <- timeIt $ do
     ch <- newChan
     let spawn i = forkIO $ do
-          t0 <- getCurrentTime
-          v <- evaluate (heavyCompute iter i)
-          t1 <- getCurrentTime
-          writeChan ch (v, realToFrac (diffUTCTime t1 t0) :: Double)
+          let v = heavyCompute iter i -- Lazy: no evaluate, but forced when written to Chan
+          writeChan ch v
     mapM_ spawn [1 .. n]
-    results <- replicateM n (readChan ch)
-    let vals = map fst results
-        tms = map snd results
-    return (sum vals, tms)
-  return (sumVals, times, totalTime)
+    vals <- replicateM n (readChan ch)
+    let result = sum vals
+    result `deepseq` return result -- Force final sum
+  return (sumVals, totalTime)
+
+runWithChanEager :: Int -> Int -> IO (Int, Double)
+runWithChanEager n iter = do
+  (sumVals, totalTime) <- timeIt $ do
+    ch <- newChan
+    let spawn i = forkIO $ do
+          v <- evaluate (heavyCompute iter i) -- Eager: force evaluation
+          writeChan ch v
+    mapM_ spawn [1 .. n]
+    vals <- replicateM n (readChan ch)
+    let result = sum vals
+    result `deepseq` return result -- Force final sum
+  return (sumVals, totalTime)
 
 -- 3) IORef atomic accumulation
 
-runWithIORefAtomic :: Int -> Int -> IO (Int, [Double], Double)
-runWithIORefAtomic n iter = do
-  ((final, times), totalTime) <- timeIt $ do
+runWithIORefAtomicLazy :: Int -> Int -> IO (Int, Double)
+runWithIORefAtomicLazy n iter = do
+  (final, totalTime) <- timeIt $ do
     acc <- newIORef (0 :: Int)
     ch <- newChan
     let spawn i = forkIO $ do
-          t0 <- getCurrentTime
-          v <- evaluate (heavyCompute iter i)
+          let v = heavyCompute iter i -- Lazy: no evaluate, but forced when used in atomicModifyIORef'
           atomicModifyIORef' acc (\old -> (old + v, ()))
-          t1 <- getCurrentTime
-          writeChan ch (v, realToFrac (diffUTCTime t1 t0) :: Double)
+          writeChan ch v
     mapM_ spawn [1 .. n]
-    results <- replicateM n (readChan ch)
+    replicateM n (readChan ch) -- Wait for all threads
     final' <- readIORef acc
-    return (final', map snd results)
-  return (final, times, totalTime)
+    final' `deepseq` return final' -- Force final value
+  return (final, totalTime)
+
+runWithIORefAtomicEager :: Int -> Int -> IO (Int, Double)
+runWithIORefAtomicEager n iter = do
+  (final, totalTime) <- timeIt $ do
+    acc <- newIORef (0 :: Int)
+    ch <- newChan
+    let spawn i = forkIO $ do
+          v <- evaluate (heavyCompute iter i) -- Eager: force evaluation
+          atomicModifyIORef' acc (\old -> (old + v, ()))
+          writeChan ch v
+    mapM_ spawn [1 .. n]
+    replicateM n (readChan ch) -- Wait for all threads
+    final' <- readIORef acc
+    final' `deepseq` return final' -- Force final value
+  return (final, totalTime)
 
 -- 4) STM (TVar) accumulation
 
-runWithSTM :: Int -> Int -> IO (Int, [Double], Double)
-runWithSTM n iter = do
-  ((final, times), totalTime) <- timeIt $ do
-    tSum <- atomically $ newTVar (0 :: Int)
+runWithSTMLazy :: Int -> Int -> IO (Int, Double)
+runWithSTMLazy n iter = do
+  (final, totalTime) <- timeIt $ do
+    tSum <- newTVarIO (0 :: Int)
     ch <- newChan
     let spawn i = forkIO $ do
-          t0 <- getCurrentTime
-          v <- evaluate (heavyCompute iter i)
+          let v = heavyCompute iter i -- Lazy: no evaluate, but forced when used in modifyTVar'
           atomically $ modifyTVar' tSum (+ v)
-          t1 <- getCurrentTime
-          writeChan ch (v, realToFrac (diffUTCTime t1 t0) :: Double)
+          writeChan ch v
     mapM_ spawn [1 .. n]
-    results <- replicateM n (readChan ch)
-    final' <- atomically $ readTVar tSum
-    return (final', map snd results)
-  return (final, times, totalTime)
+    replicateM n (readChan ch) -- Wait for all threads
+    final' <- readTVarIO tSum
+    final' `deepseq` return final' -- Force final value
+  return (final, totalTime)
 
-type Method = (String, Int -> Int -> IO (Int, [Double], Double))
+runWithSTMEager :: Int -> Int -> IO (Int, Double)
+runWithSTMEager n iter = do
+  (final, totalTime) <- timeIt $ do
+    tSum <- newTVarIO (0 :: Int)
+    ch <- newChan
+    let spawn i = forkIO $ do
+          v <- evaluate (heavyCompute iter i) -- Eager: force evaluation
+          atomically $ modifyTVar' tSum (+ v)
+          writeChan ch v
+    mapM_ spawn [1 .. n]
+    replicateM n (readChan ch) -- Wait for all threads
+    final' <- readTVarIO tSum
+    final' `deepseq` return final' -- Force final value
+  return (final, totalTime)
+
+type Method = (String, Int -> Int -> IO (Int, Double))
 
 availableMethods :: [Method]
 availableMethods =
-  [ ("MVar per thread", \n iter -> runWithMVars n iter),
-    ("Chan", \n iter -> runWithChan n iter),
-    ("IORef atomic", \n iter -> runWithIORefAtomic n iter),
-    ("STM (TVar)", \n iter -> runWithSTM n iter)
+  [ ("Single-threaded (lazy)", \n iter -> runSingleThreadLazy n iter),
+    ("Single-threaded (eager)", \n iter -> runSingleThreadEager n iter),
+    ("MVar per thread (lazy)", \n iter -> runWithMVarsLazy n iter),
+    ("MVar per thread (eager)", \n iter -> runWithMVarsEager n iter),
+    ("Chan (lazy)", \n iter -> runWithChanLazy n iter),
+    ("Chan (eager)", \n iter -> runWithChanEager n iter),
+    ("IORef atomic (lazy)", \n iter -> runWithIORefAtomicLazy n iter),
+    ("IORef atomic (eager)", \n iter -> runWithIORefAtomicEager n iter),
+    ("STM (TVar) (lazy)", \n iter -> runWithSTMLazy n iter),
+    ("STM (TVar) (eager)", \n iter -> runWithSTMEager n iter)
   ]
 
 runAll :: Int -> Int -> IO ()
@@ -147,37 +219,52 @@ runAll n iter = do
 runAndPrint :: Int -> Int -> Method -> IO ()
 runAndPrint n iter (name, action) = do
   putStrLn $ "\n=== Method: " ++ name ++ " ==="
-  (res, times, totalTime) <- action n iter
+  (res, totalTime) <- action n iter
   printf "Total sum = %d\n" res
-  if null times || all (== 0) times
-    then printf "Total wall time = %.6f s  (per-task times unavailable or not measured)\n" totalTime
-    else do
-      let sTimes = sort times
-          (mn, mx, av, md) = stats sTimes
-      printf "Total wall time = %.6f s\n" totalTime
-      printf "Per-task times (sec): min=%.6f max=%.6f avg=%.6f median=%.6f\n" mn mx av md
+  printf "Total wall time = %.6f s\n" totalTime
 
 main :: IO ()
 main = runAll 3000 100000
 
+-- Lazy verssions do not take advantage of multiple threads
 -- Benchmark: n = 3000, iter = 100000
 
--- === Method: MVar per thread ===
+-- === Method: Single-threaded (lazy) ===
 -- Total sum = 22439212480
--- Total wall time = 6.129785 s
--- Per-task times (sec): min=0.013791 max=0.590937 avg=0.074174 median=0.049536
+-- Total wall time = 30.513029 s
 
--- === Method: Chan ===
+-- === Method: Single-threaded (eager) ===
 -- Total sum = 22439212480
--- Total wall time = 6.000275 s
--- Per-task times (sec): min=0.011785 max=0.598389 avg=0.070202 median=0.042516
+-- Total wall time = 29.386858 s
 
--- === Method: IORef atomic ===
+-- === Method: MVar per thread (lazy) ===
 -- Total sum = 22439212480
--- Total wall time = 6.459502 s
--- Per-task times (sec): min=0.018083 max=0.508005 avg=0.064646 median=0.041609
+-- Total wall time = 30.853059 s
 
--- === Method: STM (TVar) ===
+-- === Method: MVar per thread (eager) ===
 -- Total sum = 22439212480
--- Total wall time = 6.002979 s
--- Per-task times (sec): min=0.015792 max=0.470846 avg=0.062153 median=0.039442
+-- Total wall time = 2.473174 s
+
+-- === Method: Chan (lazy) ===
+-- Total sum = 22439212480
+-- Total wall time = 29.666326 s
+
+-- === Method: Chan (eager) ===
+-- Total sum = 22439212480
+-- Total wall time = 2.480701 s
+
+-- === Method: IORef atomic (lazy) ===
+-- Total sum = 22439212480
+-- Total wall time = 29.503403 s
+
+-- === Method: IORef atomic (eager) ===
+-- Total sum = 22439212480
+-- Total wall time = 2.438593 s
+
+-- === Method: STM (TVar) (lazy) ===
+-- Total sum = 22439212480
+-- Total wall time = 2.418602 s
+
+-- === Method: STM (TVar) (eager) ===
+-- Total sum = 22439212480
+-- Total wall time = 2.464690 s
