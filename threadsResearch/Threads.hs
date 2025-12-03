@@ -54,24 +54,24 @@ stats xs =
       md = median s
    in (mn, mx, av, md)
 
--- 0) Single-threaded (sequential, no threads)
+-- 0) Single-threaded
 
 runSingleThreadLazy :: Int -> Int -> IO (Int, Double)
 runSingleThreadLazy n iter = do
   (sumVals, totalTime) <- timeIt $ do
-    let compute i = heavyCompute iter i -- Lazy: no evaluate, but will be forced by sum
+    let compute i = heavyCompute iter i
         vals = map compute [1 .. n]
         result = sum vals
-    result `deepseq` return result -- Force full evaluation
+    result `deepseq` return result
   return (sumVals, totalTime)
 
 runSingleThreadEager :: Int -> Int -> IO (Int, Double)
 runSingleThreadEager n iter = do
   (sumVals, totalTime) <- timeIt $ do
     let compute i = heavyCompute iter i
-    vals <- mapM (\i -> evaluate (compute i)) [1 .. n] -- Eager: force evaluation
+    vals <- mapM (\i -> evaluate (compute i)) [1 .. n]
     let result = sum vals
-    result `deepseq` return result -- Force full evaluation
+    result `deepseq` return result
   return (sumVals, totalTime)
 
 -- 1) MVar per thread
@@ -81,12 +81,12 @@ runWithMVarsLazy n iter = do
   (sumVals, totalTime) <- timeIt $ do
     mvars <- replicateM n newEmptyMVar
     let spawn i mv = forkIO $ do
-          let v = heavyCompute iter i -- Lazy: no evaluate, but forced when put in MVar
+          let v = heavyCompute iter i
           putMVar mv v
     zipWithM_ spawn [1 .. n] mvars
     vals <- mapM takeMVar mvars
     let result = sum vals
-    result `deepseq` return result -- Force final sum
+    result `deepseq` return result
   return (sumVals, totalTime)
 
 runWithMVarsEager :: Int -> Int -> IO (Int, Double)
@@ -94,12 +94,12 @@ runWithMVarsEager n iter = do
   (sumVals, totalTime) <- timeIt $ do
     mvars <- replicateM n newEmptyMVar
     let spawn i mv = forkIO $ do
-          v <- evaluate (heavyCompute iter i) -- Eager: force evaluation
+          v <- evaluate (heavyCompute iter i)
           putMVar mv v
     zipWithM_ spawn [1 .. n] mvars
     vals <- mapM takeMVar mvars
     let result = sum vals
-    result `deepseq` return result -- Force final sum
+    result `deepseq` return result
   return (sumVals, totalTime)
 
 -- 2) Chan
@@ -109,12 +109,12 @@ runWithChanLazy n iter = do
   (sumVals, totalTime) <- timeIt $ do
     ch <- newChan
     let spawn i = forkIO $ do
-          let v = heavyCompute iter i -- Lazy: no evaluate, but forced when written to Chan
+          let v = heavyCompute iter i
           writeChan ch v
     mapM_ spawn [1 .. n]
     vals <- replicateM n (readChan ch)
     let result = sum vals
-    result `deepseq` return result -- Force final sum
+    result `deepseq` return result
   return (sumVals, totalTime)
 
 runWithChanEager :: Int -> Int -> IO (Int, Double)
@@ -122,12 +122,12 @@ runWithChanEager n iter = do
   (sumVals, totalTime) <- timeIt $ do
     ch <- newChan
     let spawn i = forkIO $ do
-          v <- evaluate (heavyCompute iter i) -- Eager: force evaluation
+          v <- evaluate (heavyCompute iter i)
           writeChan ch v
     mapM_ spawn [1 .. n]
     vals <- replicateM n (readChan ch)
     let result = sum vals
-    result `deepseq` return result -- Force final sum
+    result `deepseq` return result
   return (sumVals, totalTime)
 
 -- 3) IORef atomic accumulation
@@ -138,13 +138,13 @@ runWithIORefAtomicLazy n iter = do
     acc <- newIORef (0 :: Int)
     ch <- newChan
     let spawn i = forkIO $ do
-          let v = heavyCompute iter i -- Lazy: no evaluate, but forced when used in atomicModifyIORef'
+          let v = heavyCompute iter i
           atomicModifyIORef' acc (\old -> (old + v, ()))
           writeChan ch v
     mapM_ spawn [1 .. n]
-    replicateM n (readChan ch) -- Wait for all threads
+    replicateM n (readChan ch)
     final' <- readIORef acc
-    final' `deepseq` return final' -- Force final value
+    final' `deepseq` return final'
   return (final, totalTime)
 
 runWithIORefAtomicEager :: Int -> Int -> IO (Int, Double)
@@ -153,13 +153,13 @@ runWithIORefAtomicEager n iter = do
     acc <- newIORef (0 :: Int)
     ch <- newChan
     let spawn i = forkIO $ do
-          v <- evaluate (heavyCompute iter i) -- Eager: force evaluation
+          v <- evaluate (heavyCompute iter i)
           atomicModifyIORef' acc (\old -> (old + v, ()))
           writeChan ch v
     mapM_ spawn [1 .. n]
-    replicateM n (readChan ch) -- Wait for all threads
+    replicateM n (readChan ch)
     final' <- readIORef acc
-    final' `deepseq` return final' -- Force final value
+    final' `deepseq` return final'
   return (final, totalTime)
 
 -- 4) STM (TVar) accumulation
@@ -170,13 +170,13 @@ runWithSTMLazy n iter = do
     tSum <- newTVarIO (0 :: Int)
     ch <- newChan
     let spawn i = forkIO $ do
-          let v = heavyCompute iter i -- Lazy: no evaluate, but forced when used in modifyTVar'
+          let v = heavyCompute iter i
           atomically $ modifyTVar' tSum (+ v)
           writeChan ch v
     mapM_ spawn [1 .. n]
-    replicateM n (readChan ch) -- Wait for all threads
+    replicateM n (readChan ch)
     final' <- readTVarIO tSum
-    final' `deepseq` return final' -- Force final value
+    final' `deepseq` return final'
   return (final, totalTime)
 
 runWithSTMEager :: Int -> Int -> IO (Int, Double)
@@ -185,13 +185,13 @@ runWithSTMEager n iter = do
     tSum <- newTVarIO (0 :: Int)
     ch <- newChan
     let spawn i = forkIO $ do
-          v <- evaluate (heavyCompute iter i) -- Eager: force evaluation
+          v <- evaluate (heavyCompute iter i)
           atomically $ modifyTVar' tSum (+ v)
           writeChan ch v
     mapM_ spawn [1 .. n]
-    replicateM n (readChan ch) -- Wait for all threads
+    replicateM n (readChan ch)
     final' <- readTVarIO tSum
-    final' `deepseq` return final' -- Force final value
+    final' `deepseq` return final'
   return (final, totalTime)
 
 type Method = (String, Int -> Int -> IO (Int, Double))
