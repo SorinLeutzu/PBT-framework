@@ -1,9 +1,9 @@
 {-# LANGUAGE LambdaCase #-}
 
+
 module Random where
 
-import BitOps (shiftL, shiftR)
-import Control.Monad ()
+import Control.Monad (guard)
 import Control.Monad.State
   ( MonadState (get, put),
     State,
@@ -13,10 +13,13 @@ import Control.Monad.State
   )
 import Data.Bits (xor, (.&.))
 import Data.Coerce (coerce)
-import Data.List (nub)
+import Data.List (nub, sort)
 import Data.Word qualified as W
 import Next (nextMersenne, nextXor, nextpcg64)
-import Sorting (sort)
+
+import Data.Map qualified as M
+
+
 
 data PRNG
   = PRNG_Xor W.Word64
@@ -105,6 +108,10 @@ class Arbitrary a where
   arbitrary :: Gen a
   shrink :: a -> [a]
   shrink _ = []
+  aggShrink :: a -> [a]
+  aggShrink _ = []
+  extraShrinks :: a -> [a->[a]] -- a list of extra shrinks that may further reduce the counterexample after standard/aggressive shrinking
+  extraShrinks _ = []
 
 instance Arbitrary Int where
   arbitrary = nextInt
@@ -124,6 +131,10 @@ instance (Arbitrary a) => Arbitrary [a] where
     where
       shrinkElem :: a -> [a]
       shrinkElem = shrink
+  extraShrinks list = buildShrinkAllElFunctions shrinkElem list
+    where
+      shrinkElem :: a -> [a]
+      shrinkElem = shrink 
 
 instance Arbitrary Char where
   arbitrary = do
@@ -211,31 +222,46 @@ instance (Arbitrary a, Ord a) => Arbitrary (SortedList a) where
 instance (Show a) => Show (SortedList a) where
   show (SortedList l) = show l
 
--- works by halving the parameter value consecutevely
--- shrinkIntStd :: Int -> [Int]
+
 shrinkIntStd 0 = []
 shrinkIntStd x = takeWhile (/= 0) $ iterate (`div` 2) x
+
+
+
+shrinkIntAgg 0 = []
+shrinkIntAgg x = takeWhile (/= 0) $ iterate (`div` 10) x
+
+-- further shrink an integer by decrementing its value by a constant
+decrement :: Int
+decrement = 5
+
+shrink1 0 = []
+shrink1 x | sgn x == 1 = takeWhile (>0) $ iterate (subtract decrement) x
+          | sgn x == -1 = takeWhile (<0) $ iterate (+decrement) x
+
+ex1 = take 4 $ shrink1 100
+ex2 = take 3 $ shrink1 (-43)
 
 sgn x
   | x < 0 = -1
   | x == 0 = 0
   | x > 0 = 1
 
-log2 :: Int -> Int
-log2 x | x >= 0 && x < 2 = 0
-log2 x
-  | x >= 2 = exp2 1 0 x
-  | x < 0 = sgn x * exp2 1 0 (x `div` sgn x)
+-- log2 :: Int -> Int
+-- log2 x | x >= 0 && x < 2 = 0
+-- log2 x
+--   | x >= 2 = exp2 1 0 x
+--   | x < 0 = sgn x * exp2 1 0 (x `div` sgn x)
 
-exp2 :: Int -> Int -> Int -> Int
-exp2 acc power upperBound
-  | acc < upperBound = exp2 (acc * 2) (power + 1) upperBound
-  | otherwise = power
+-- exp2 :: Int -> Int -> Int -> Int
+-- exp2 acc power upperBound
+--   | acc < upperBound = exp2 (acc * 2) (power + 1) upperBound
+--   | otherwise = power
 
 -- works by taking the base 2 logarithm consecutively
-shrinkIntAgg :: Int -> [Int]
-shrinkIntAgg 0 = []
-shrinkIntAgg x = takeWhile (/= 0) $ iterate log2 x
+-- shrinkIntAgg :: Int -> [Int]
+-- shrinkIntAgg 0 = []
+-- shrinkIntAgg x = takeWhile (/= 0) $ iterate log2 x
 
 shrinkBool :: Bool -> [Bool]
 shrinkBool True = [False]
@@ -288,3 +314,27 @@ shrinkString shrinkingCharFunction list
           secondHalfList = drop ((length list) `div` 2) list
           shrunkList = head (map shrinkingCharFunction secondHalfList)
        in shrunkList : firstHalfList : shrinkString shrinkingCharFunction firstHalfList
+
+removeFirst :: [a] -> [[a]]
+removeFirst list = iterate (tail) list
+
+ex4 = take 4 $ removeFirst [1,2,3,4,5]
+
+removeLast :: [a] -> [[a]]
+removeLast list = iterate (init) list
+
+ex5 = take 4 $ removeLast [1,2,3,4,5]
+
+replaceElAtPos :: [a] -> Int -> a -> [a]
+replaceElAtPos list pos newEl = beginning ++ (newEl : end) where
+  beginning = take pos list
+  end = drop (pos+1) list 
+
+shrinkElAtPos :: (a->[a]) -> Int -> [a] -> [[a]]
+shrinkElAtPos shrinkingFunction pos list = let shrinkingCandidates = shrinkingFunction (list !! pos )
+                                              in map (\candidate -> replaceElAtPos list pos candidate) shrinkingCandidates
+
+-- returns a list of functions that take a list and return the shrinking candidates for a given element of that list
+buildShrinkAllElFunctions :: (a->[a]) -> [a] -> [[a]->[[a]]]
+buildShrinkAllElFunctions shrinkingFunction list = let indexes = [0..(length list) -1]
+                                                       in map (\index-> shrinkElAtPos shrinkingFunction index) indexes
