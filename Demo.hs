@@ -13,6 +13,7 @@ where
 import Control.Monad (replicateM, when)
 import Control.Monad.Writer (Writer, runWriter, tell)
 import Data.List (take)
+import Helper (parallelMap)
 import Matchers.Core (Matcher (..), eq, gt)
 import Random qualified as Rand
 
@@ -31,12 +32,17 @@ applyShrinkRaw element matcher getShrinkingCandidates = do
     else go element (getShrinkingCandidates element)
   where
     go lastFail [] = return lastFail
-    go lastFail (c : cs) = do
-      let passed = matches matcher c
-      tell [LogEntry c passed]
-      if passed
-        then return lastFail
-        else go c cs
+    go lastFail candidates = do
+      let results = parallelMap (\c -> (c, matches matcher c)) candidates
+      tell (map (\(c, passed) -> LogEntry c passed) results)
+      case findFirstFailure results of
+        Nothing -> return lastFail
+        Just (firstFail, _) -> go firstFail (getShrinkingCandidates firstFail)
+    
+    findFirstFailure [] = Nothing
+    findFirstFailure ((c, passed) : rest)
+      | not passed = Just (c, passed)
+      | otherwise = findFirstFailure rest
 
 assertThenShrinkRaw :: (Matcher m a) => a -> m -> (a -> [a]) -> Writer [LogEntry a] (Maybe a)
 assertThenShrinkRaw element matcher getShrinkingCandidates
