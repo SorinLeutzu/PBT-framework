@@ -87,7 +87,7 @@ nextIntRange lo hi
   | hi <= lo = pure lo
   | otherwise = do
       n <- nextInt
-      let range = hi - lo
+      let range = hi - lo + 1
        in pure (lo + (n `mod` range))
 
 nextBool :: Rnd Bool
@@ -104,8 +104,16 @@ randomSample def as = do
   idx <- nextIntRange 0 (length as)
   pure (as !! idx)
 
-class Arbitrary a where
-  arbitrary :: Gen a
+randomElement :: [a] -> Rnd a
+--randomElement [] = error "randomElement: empty list"
+randomElement xs = do
+    idx <- nextIntRange 0 (length xs - 1)
+    return (xs !! idx)
+
+class Arbitrary a o where
+  arbitrary :: o -> Gen a
+
+class Shrinkable a where
   shrink :: a -> [a]
   shrink _ = []
   aggShrink :: a -> [a]
@@ -113,20 +121,26 @@ class Arbitrary a where
   extraShrinks :: a -> [a->[a]] -- a list of extra shrinks that may further reduce the counterexample after standard/aggressive shrinking
   extraShrinks _ = []
 
-instance Arbitrary Int where
-  arbitrary = nextInt
+instance Arbitrary Int o where
+  arbitrary _ = nextInt
+
+instance Shrinkable Int where
   shrink = shrinkIntStd
 
-instance Arbitrary Bool where
-  arbitrary = nextBool
+instance Arbitrary Bool o where
+  arbitrary _ = nextBool
+
+instance Shrinkable Bool where
   shrink = shrinkBool
 
-instance (Arbitrary a) => Arbitrary [a] where
-  arbitrary = do
+instance (Arbitrary a o) => Arbitrary [a] o where
+  arbitrary o = do
     i <- nextIntRange 0 4
     if i > 0
-      then (:) <$> arbitrary <*> arbitrary
+      then (:) <$> arbitrary o <*> arbitrary o
       else return []
+
+instance (Shrinkable a) => Shrinkable [a] where
   shrink list = shrinkListStd shrinkElem list 1
     where
       shrinkElem :: a -> [a]
@@ -136,24 +150,32 @@ instance (Arbitrary a) => Arbitrary [a] where
       shrinkElem :: a -> [a]
       shrinkElem = shrink 
 
-instance Arbitrary Char where
-  arbitrary = do
+instance Arbitrary Char o where
+  arbitrary _ = do
     let allChars = enumFromTo (minBound :: Char) (maxBound :: Char)
     randomSample (head allChars) allChars
+
+instance Shrinkable Char where
   shrink x = printableChars
 
-instance (Arbitrary a, Arbitrary b) => Arbitrary (a, b) where
-  arbitrary = (,) <$> arbitrary <*> arbitrary
+instance (Arbitrary a oa, Arbitrary b ob) => Arbitrary (a, b) (oa,ob) where
+  arbitrary (oa, ob) = (,) <$> arbitrary oa <*> arbitrary ob
+
+instance (Shrinkable a, Shrinkable b) => Shrinkable (a,b) where
   shrink (left, right) = zip (shrink left) (shrink right)
 
-instance (Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (a, b, c) where
-  arbitrary = (,,) <$> arbitrary <*> arbitrary <*> arbitrary
+instance (Arbitrary a oa, Arbitrary b ob, Arbitrary c oc) => Arbitrary (a, b, c) (oa,ob,oc) where
+  arbitrary (oa, ob, oc) = (,,) <$> arbitrary oa <*> arbitrary ob <*> arbitrary oc
+
+instance (Shrinkable a,Shrinkable b, Shrinkable c) => Shrinkable (a,b,c) where
   shrink (left, middle, right) = zip3 (shrink left) (shrink middle) (shrink right)
 
 newtype SmallInt = SmallInt {getSmallInt :: Int} deriving (Eq, Ord, Enum, Real, Num, Integral)
 
-instance Arbitrary SmallInt where
-  arbitrary = SmallInt <$> nextIntRange 0 100
+instance Arbitrary SmallInt o where
+  arbitrary _ = SmallInt <$> nextIntRange 0 100
+
+instance Shrinkable SmallInt where
   shrink = shrinkIntStd
 
 instance Show SmallInt where
@@ -175,17 +197,20 @@ shrinkPrintableChar x = map PrintableChar printableChars
 
 shrinkAlphaNumChar x = map AlphaNumChar alphaNumChars
 
-instance Arbitrary PrintableChar where
-  arbitrary = PrintableChar <$> randomSample 'a' printableChars
+instance Arbitrary PrintableChar o where
+  arbitrary _= PrintableChar <$> randomSample 'a' printableChars
 
+instance Shrinkable PrintableChar where
   shrink (PrintableChar c) = shrinkPrintableChar c
 
 newtype PrintableString = PrintableString {getPrintableString :: String} deriving (Eq)
 
-instance Arbitrary PrintableString where
-  arbitrary = do
-    printableChrs <- (arbitrary :: Gen [PrintableChar])
+instance Arbitrary PrintableString o where
+  arbitrary o = do
+    printableChrs <- (arbitrary o :: Gen [PrintableChar])
     return $ PrintableString (map getPrintableChar printableChrs)
+
+instance Shrinkable PrintableString where
   shrink (PrintableString s) = coerce (shrinkString shrinkPrintableChar (coerce s :: [PrintableChar])) :: [PrintableString]
 
 instance Show PrintableString where
@@ -195,16 +220,20 @@ newtype AlphaNumChar = AlphaNumChar {getAlphaNumChar :: Char} deriving (Eq)
 
 alphaNumChars = ['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9']
 
-instance Arbitrary AlphaNumChar where
-  arbitrary = AlphaNumChar <$> randomSample 'a' alphaNumChars
+instance Arbitrary AlphaNumChar o where
+  arbitrary _ = AlphaNumChar <$> randomSample 'a' alphaNumChars
+
+instance Shrinkable AlphaNumChar where
   shrink = shrinkAlphaNumChar
 
 newtype AlphaNumString = AlphaNumString {getAlphaNumString :: String} deriving (Eq)
 
-instance Arbitrary AlphaNumString where
-  arbitrary = do
-    printableChrs <- (arbitrary :: Gen [AlphaNumChar])
+instance Arbitrary AlphaNumString o where
+  arbitrary o = do
+    printableChrs <- (arbitrary o :: Gen [AlphaNumChar])
     return $ AlphaNumString (map getAlphaNumChar printableChrs)
+
+instance Shrinkable AlphaNumString where
   shrink (AlphaNumString s) = coerce (shrinkString shrinkAlphaNumChar (coerce s :: [AlphaNumChar])) :: [AlphaNumString]
 
 instance Show AlphaNumString where
@@ -212,8 +241,10 @@ instance Show AlphaNumString where
 
 newtype SortedList a = SortedList {getSortedList :: [a]} deriving (Eq, Ord)
 
-instance (Arbitrary a, Ord a) => Arbitrary (SortedList a) where
-  arbitrary = SortedList . sort <$> (arbitrary :: Gen [a])
+instance (Arbitrary a o, Ord a) => Arbitrary (SortedList a) o where
+  arbitrary o = SortedList . sort <$> (arbitrary o :: Gen [a])
+
+instance (Shrinkable a, Ord a) => Shrinkable (SortedList a) where 
   shrink (SortedList list) = map SortedList (shrinkListStd shrinkElem list 1)
     where
       shrinkElem :: a -> [a]
@@ -221,6 +252,8 @@ instance (Arbitrary a, Ord a) => Arbitrary (SortedList a) where
 
 instance (Show a) => Show (SortedList a) where
   show (SortedList l) = show l
+
+newtype GrammarFuzzedString = FuzzedString {getFuzzedString:: String} 
 
 
 shrinkIntStd 0 = []
