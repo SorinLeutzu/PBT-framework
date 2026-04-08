@@ -12,7 +12,6 @@ import Control.Monad.State
     runState,
   )
 import Data.Bits (xor, (.&.))
-import Data.Coerce (coerce)
 import Data.List (nub, sort)
 import Data.Word qualified as W
 import Next (nextMersenne, nextXor, nextpcg64)
@@ -20,11 +19,33 @@ import Next (nextMersenne, nextXor, nextpcg64)
 import Data.Map qualified as M
 
 
+data CharOpt = CharAny | CharPrintable | CharAlphaNum deriving (Eq, Show)
 
-data PRNG
-  = PRNG_Xor W.Word64
-  | PRNG_Mersenne W.Word64
-  | PRNG_Pcg W.Word64
+data StringOpt = StringAny | StringPrintable | StringAlphaNum deriving (Eq, Show)
+
+data IntOpt = IntAny | IntRange Int Int deriving (Eq, Show)
+
+data ListOrder = ListRandom | ListAscending | ListDescending deriving (Eq, Show)
+
+data ListOpt o = ListOpt
+  { listMinLen :: Int,
+    listMaxLen :: Int,
+    listOrder :: ListOrder,
+    listElemOpt :: o
+  }
+  deriving (Eq, Show)
+
+defaultListOpt :: o -> ListOpt o
+defaultListOpt o = ListOpt
+    { listMinLen = 0,
+      listMaxLen = 4,
+      listOrder = ListRandom,
+      listElemOpt = o
+    }
+
+
+
+data PRNG = PRNG_Xor W.Word64 | PRNG_Mersenne W.Word64| PRNG_Pcg W.Word64
   deriving (Show, Eq)
 
 seedXor, seedMersenne, seedPcg :: W.Word64
@@ -121,24 +142,43 @@ class Shrinkable a where
   extraShrinks :: a -> [a->[a]] -- a list of extra shrinks that may further reduce the counterexample after standard/aggressive shrinking
   extraShrinks _ = []
 
-instance Arbitrary Int o where
-  arbitrary _ = nextInt
+instance Arbitrary Int () where
+  arbitrary () = nextInt
+
+instance Arbitrary Int IntOpt where
+  arbitrary opt =
+    case opt of
+      IntAny -> nextInt
+      IntRange lo hi -> nextIntRange lo hi
 
 instance Shrinkable Int where
   shrink = shrinkIntStd
 
-instance Arbitrary Bool o where
-  arbitrary _ = nextBool
+instance Arbitrary Bool () where
+  arbitrary () = nextBool
 
 instance Shrinkable Bool where
   shrink = shrinkBool
 
-instance (Arbitrary a o) => Arbitrary [a] o where
-  arbitrary o = do
-    i <- nextIntRange 0 4
-    if i > 0
-      then (:) <$> arbitrary o <*> arbitrary o
-      else return []
+
+instance (Arbitrary a ()) => Arbitrary [a] () where
+  arbitrary () = do
+    n <- nextIntRange 0 4
+    sequenceA (replicate n (arbitrary ()))
+
+
+instance (Arbitrary a o, Ord a) => Arbitrary [a] (ListOpt o) where
+  arbitrary opt = do
+    let lo = max 0 (listMinLen opt)
+        hiRaw = max 0 (listMaxLen opt)
+        hi = if hiRaw < lo then lo else hiRaw
+    n <- nextIntRange lo hi
+    xs <- sequenceA (replicate n (arbitrary (listElemOpt opt)))
+    pure $
+      case listOrder opt of
+        ListRandom -> xs
+        ListAscending -> sort xs
+        ListDescending -> reverse (sort xs)
 
 instance (Shrinkable a) => Shrinkable [a] where
   shrink list = shrinkListStd shrinkElem list 1
@@ -150,10 +190,29 @@ instance (Shrinkable a) => Shrinkable [a] where
       shrinkElem :: a -> [a]
       shrinkElem = shrink 
 
-instance Arbitrary Char o where
-  arbitrary _ = do
+instance Arbitrary Char () where
+  arbitrary () = do
     let allChars = enumFromTo (minBound :: Char) (maxBound :: Char)
     randomSample (head allChars) allChars
+
+instance Arbitrary Char CharOpt where
+  arbitrary opt =
+    case opt of
+      CharAny -> arbitrary ()
+      CharPrintable -> randomSample 'a' printableChars
+      CharAlphaNum -> randomSample 'a' alphaNumChars
+
+
+arbitraryString :: StringOpt -> Gen String
+arbitraryString opt =
+  case opt of
+    StringAny -> (arbitrary () :: Gen [Char])
+    StringPrintable -> do
+      n <- nextIntRange 0 4
+      sequenceA (replicate n (arbitrary CharPrintable))
+    StringAlphaNum -> do
+      n <- nextIntRange 0 4
+      sequenceA (replicate n (arbitrary CharAlphaNum))
 
 instance Shrinkable Char where
   shrink x = printableChars
@@ -170,19 +229,6 @@ instance (Arbitrary a oa, Arbitrary b ob, Arbitrary c oc) => Arbitrary (a, b, c)
 instance (Shrinkable a,Shrinkable b, Shrinkable c) => Shrinkable (a,b,c) where
   shrink (left, middle, right) = zip3 (shrink left) (shrink middle) (shrink right)
 
-newtype SmallInt = SmallInt {getSmallInt :: Int} deriving (Eq, Ord, Enum, Real, Num, Integral)
-
-instance Arbitrary SmallInt o where
-  arbitrary _ = SmallInt <$> nextIntRange 0 100
-
-instance Shrinkable SmallInt where
-  shrink = shrinkIntStd
-
-instance Show SmallInt where
-  show (SmallInt i) = show i
-
-newtype PrintableChar = PrintableChar {getPrintableChar :: Char} deriving (Eq)
-
 lowercaseLetters = ['a' .. 'z']
 
 uppercaseLetters = ['A' .. 'Z']
@@ -193,56 +239,21 @@ specialPrintableCharacters = " !@#$%^&*()_+-=[]{}"
 
 printableChars = lowercaseLetters ++ uppercaseLetters ++ digits ++ specialPrintableCharacters
 
-shrinkPrintableChar x = map PrintableChar printableChars
-
-shrinkAlphaNumChar x = map AlphaNumChar alphaNumChars
-
-instance Arbitrary PrintableChar o where
-  arbitrary _= PrintableChar <$> randomSample 'a' printableChars
-
-instance Shrinkable PrintableChar where
-  shrink (PrintableChar c) = shrinkPrintableChar c
-
-newtype PrintableString = PrintableString {getPrintableString :: String} deriving (Eq)
-
-instance Arbitrary PrintableString o where
-  arbitrary o = do
-    printableChrs <- (arbitrary o :: Gen [PrintableChar])
-    return $ PrintableString (map getPrintableChar printableChrs)
-
-instance Shrinkable PrintableString where
-  shrink (PrintableString s) = coerce (shrinkString shrinkPrintableChar (coerce s :: [PrintableChar])) :: [PrintableString]
-
-instance Show PrintableString where
-  show (PrintableString s) = show s
-
-newtype AlphaNumChar = AlphaNumChar {getAlphaNumChar :: Char} deriving (Eq)
-
 alphaNumChars = ['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9']
 
-instance Arbitrary AlphaNumChar o where
-  arbitrary _ = AlphaNumChar <$> randomSample 'a' alphaNumChars
 
-instance Shrinkable AlphaNumChar where
-  shrink = shrinkAlphaNumChar
+shrinkPrintableChar :: Char -> [Char]
+shrinkPrintableChar _ = printableChars
 
-newtype AlphaNumString = AlphaNumString {getAlphaNumString :: String} deriving (Eq)
-
-instance Arbitrary AlphaNumString o where
-  arbitrary o = do
-    printableChrs <- (arbitrary o :: Gen [AlphaNumChar])
-    return $ AlphaNumString (map getAlphaNumChar printableChrs)
-
-instance Shrinkable AlphaNumString where
-  shrink (AlphaNumString s) = coerce (shrinkString shrinkAlphaNumChar (coerce s :: [AlphaNumChar])) :: [AlphaNumString]
-
-instance Show AlphaNumString where
-  show (AlphaNumString s) = show s
+shrinkAlphaNumChar :: Char -> [Char]
+shrinkAlphaNumChar _ = alphaNumChars
 
 newtype SortedList a = SortedList {getSortedList :: [a]} deriving (Eq, Ord)
 
 instance (Arbitrary a o, Ord a) => Arbitrary (SortedList a) o where
-  arbitrary o = SortedList . sort <$> (arbitrary o :: Gen [a])
+  arbitrary o =
+    let opt = defaultListOpt o
+     in SortedList . sort <$> (arbitrary opt :: Gen [a])
 
 instance (Shrinkable a, Ord a) => Shrinkable (SortedList a) where 
   shrink (SortedList list) = map SortedList (shrinkListStd shrinkElem list 1)
