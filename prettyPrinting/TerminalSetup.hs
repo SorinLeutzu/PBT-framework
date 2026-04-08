@@ -1,6 +1,6 @@
 -- {-# LANGUAGE CPP #-}
 
-module TerminalSetup
+module PrettyPrinting.TerminalSetup
   ( setupUtf8Only,
     setConsoleCpUtf8,
     setupTerminalWithChcp,
