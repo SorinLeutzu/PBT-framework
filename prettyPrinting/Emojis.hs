@@ -2,7 +2,7 @@ module PrettyPrinting.Emojis where
 
 import Data.Map qualified as M
 
-data EmojiName = Cool | Rocket | Happy | Alarm | AllPoints | Correct | Incorrect deriving (Eq, Ord)
+data EmojiName = Cool | Rocket | Happy | Alarm | AllPoints | Correct | Incorrect | Searching deriving (Eq, Ord)
 
 emojis =
   M.fromList
