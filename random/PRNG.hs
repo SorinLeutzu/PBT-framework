@@ -1,8 +1,7 @@
-module Next where
+module Random.PRNG where
 
-import BitOps (shiftL, shiftR)
-import Config
-import Data.Bits (Bits (xor, (.&.), (.|.)))
+--import Config
+import Data.Bits (Bits (shiftL, shiftR, xor, (.&.), (.|.)))
 import Data.Word qualified as W
 
 -- Xor

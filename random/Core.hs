@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 
 
-module Random where
+module Random.Core where
 
 import Control.Monad (guard)
 import Control.Monad.State
@@ -14,7 +14,7 @@ import Control.Monad.State
 import Data.Bits (xor, (.&.))
 import Data.List (nub, sort)
 import Data.Word qualified as W
-import Next (nextMersenne, nextXor, nextpcg64)
+import Random.PRNG (nextMersenne, nextXor, nextpcg64)
 
 import Data.Map qualified as M
 
@@ -188,7 +188,7 @@ instance (Shrinkable a) => Shrinkable [a] where
   extraShrinks list = buildShrinkAllElFunctions shrinkElem list
     where
       shrinkElem :: a -> [a]
-      shrinkElem = shrink 
+      shrinkElem = shrink
 
 instance Arbitrary Char () where
   arbitrary () = do
@@ -217,11 +217,17 @@ arbitraryString opt =
 instance Shrinkable Char where
   shrink x = printableChars
 
+instance (Arbitrary a (), Arbitrary b ()) => Arbitrary (a, b) () where
+  arbitrary () = (,) <$> arbitrary () <*> arbitrary ()
+
 instance (Arbitrary a oa, Arbitrary b ob) => Arbitrary (a, b) (oa,ob) where
   arbitrary (oa, ob) = (,) <$> arbitrary oa <*> arbitrary ob
 
 instance (Shrinkable a, Shrinkable b) => Shrinkable (a,b) where
   shrink (left, right) = zip (shrink left) (shrink right)
+
+instance (Arbitrary a (), Arbitrary b (), Arbitrary c ()) => Arbitrary (a, b, c) () where
+  arbitrary () = (,,) <$> arbitrary () <*> arbitrary () <*> arbitrary ()
 
 instance (Arbitrary a oa, Arbitrary b ob, Arbitrary c oc) => Arbitrary (a, b, c) (oa,ob,oc) where
   arbitrary (oa, ob, oc) = (,,) <$> arbitrary oa <*> arbitrary ob <*> arbitrary oc
@@ -255,7 +261,7 @@ instance (Arbitrary a o, Ord a) => Arbitrary (SortedList a) o where
     let opt = defaultListOpt o
      in SortedList . sort <$> (arbitrary opt :: Gen [a])
 
-instance (Shrinkable a, Ord a) => Shrinkable (SortedList a) where 
+instance (Shrinkable a, Ord a) => Shrinkable (SortedList a) where
   shrink (SortedList list) = map SortedList (shrinkListStd shrinkElem list 1)
     where
       shrinkElem :: a -> [a]
@@ -264,7 +270,7 @@ instance (Shrinkable a, Ord a) => Shrinkable (SortedList a) where
 instance (Show a) => Show (SortedList a) where
   show (SortedList l) = show l
 
-newtype GrammarFuzzedString = FuzzedString {getFuzzedString:: String} 
+newtype GrammarFuzzedString = FuzzedString {getFuzzedString:: String}
 
 
 shrinkIntStd 0 = []
@@ -372,7 +378,7 @@ ex5 = take 4 $ removeLast [1,2,3,4,5]
 replaceElAtPos :: [a] -> Int -> a -> [a]
 replaceElAtPos list pos newEl = beginning ++ (newEl : end) where
   beginning = take pos list
-  end = drop (pos+1) list 
+  end = drop (pos+1) list
 
 shrinkElAtPos :: (a->[a]) -> Int -> [a] -> [[a]]
 shrinkElAtPos shrinkingFunction pos list = let shrinkingCandidates = shrinkingFunction (list !! pos )
