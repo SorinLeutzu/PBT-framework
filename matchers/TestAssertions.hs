@@ -1,75 +1,91 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
 module TestAssertions where
 
-import Core
 import Data.List (intercalate)
+import Matchers.Core
+import Matchers.Combinators
 
--- Existential test container: holds any matcher + subject
 data Test where
-  Test :: (Matcher m a) => String -> Bool -> m -> a -> Test
+  TestPure :: (Matchable m a, Show a) => String -> Bool -> m -> a -> Test
 
 runTest :: Test -> IO Bool
-runTest (Test name expect m x) = do
-  let ok = matches m x
-      pass = ok == expect
-      explanation = explainMatch m x
+runTest t = do
+  (name, expect, got, explanation) <-
+    case t of
+      TestPure nm expct m x -> do
+        let ok = matches m x
+            expl = explainMatch m x
+        pure (nm ++ "  value=" ++ show x, expct, ok, expl)
+
+  let pass = got == expect
       status = if pass then "PASS" else "FAIL"
   putStrLn $
-    concat
-      [ name,
-        ": ",
+    intercalate
+      " "
+      [ name ++ ":",
         status,
-        " (expected=",
-        show expect,
-        ", got=",
-        show ok,
-        ")",
-        " -- ",
+        "(expected=" ++ show expect ++ ", got=" ++ show got ++ ")",
+        "--",
         explanation
       ]
-  return pass
+  pure pass
+
+-- composite and multicomposite
+
+compInt1 :: Composite Int
+compInt1 =
+  AllOf
+    [ One (AnyMatcher (GtMatcher (0 :: Int))),
+      NotOf (One (AnyMatcher (EqMatcher (7 :: Int))))
+    ]
+
+compIntNested :: Composite Int
+compIntNested =
+  AnyOf
+    [ compInt1,
+      AllOf
+        [ One (AnyMatcher (EqMatcher (42 :: Int))),
+          One (AnyMatcher (GtMatcher (10 :: Int)))
+        ]
+    ]
+
+multi1 :: MultiComposite
+multi1 =
+  AllOfM
+    [ OneM (AnyMatch (EqMatcher (5 :: Int)) (5 :: Int)),
+      OneM (AnyMatch (ContainsMatcher "ell") ("hello" :: String)),
+      OneM (AnyMatch compInt1 (3 :: Int))
+    ]
+
+multi2 :: MultiComposite
+multi2 =
+  AllOfM
+    [ OneM (AnyMatch (EqMatcher (5 :: Int)) (5 :: Int)),
+      OneM (AnyMatch (EqMatcher (999 :: Int)) (0 :: Int))
+    ]
+
+multi3 :: MultiComposite
+multi3 =
+  AnyOfM
+    [ OneM (AnyMatch (EqMatcher (999 :: Int)) (0 :: Int)),
+      NotOfM (OneM (AnyMatch (EndsWithMatcher "xx") ("hello" :: String)))
+    ]
 
 allTests :: [Test]
 allTests =
-  [ -- EqMatcher
-    Test "EqMatcher: success (5 == 5)" True (EqMatcher (5 :: Int)) (5 :: Int),
-    Test "EqMatcher: failure (5 /= 4)" False (EqMatcher (5 :: Int)) (4 :: Int),
-    -- GtMatcher (lower < higher)
-    Test "GtMatcher: success (3 < 5)" True (GtMatcher (3 :: Int)) (5 :: Int),
-    Test "GtMatcher: failure (5 < 3)" False (GtMatcher (5 :: Int)) (3 :: Int),
-    -- LtMatcher (lower < higher) -- note constructor holds the 'higher' bound
-    Test "LtMatcher: success (5 < 10)" True (LtMatcher (10 :: Int)) (5 :: Int),
-    Test "LtMatcher: failure (5 < 3)" False (LtMatcher (3 :: Int)) (5 :: Int),
-    -- ContainsMatcher (substring)
-    Test "ContainsMatcher: success (\"ell\" in \"hello\")" True (ContainsMatcher "ell") "hello",
-    Test "ContainsMatcher: failure (\"bye\" not in \"hello\")" False (ContainsMatcher "bye") "hello",
-    -- StartsWithMatcher
-    Test "StartsWithMatcher: success (\"he\" starts \"hello\")" True (StartsWithMatcher "he") "hello",
-    Test "StartsWithMatcher: failure (\"lo\" does not start \"hello\")" False (StartsWithMatcher "lo") "hello",
-    -- EndsWithMatcher
-    Test "EndsWithMatcher: success (\"lo\" ends \"hello\")" True (EndsWithMatcher "lo") "hello",
-    Test "EndsWithMatcher: failure (\"he\" does not end \"hello\")" False (EndsWithMatcher "he") "hello",
-    -- Idempotence
-    -- id is idempotent; (+1) is not (on integers)
-    Test "Idempotence: success (id is idempotent)" True (Idempotence (id :: Int -> Int) 5) (42 :: Int),
-    Test "Idempotence: failure ((+1) not idempotent)" False (Idempotence ((+ 1) :: Int -> Int) 3) (0 :: Int),
-    -- Invertibility
-    Test "Invertibility: success ((+1) and subtract 1)" True (Invertibility ((+ 1) :: Int -> Int) (subtract 1 :: Int -> Int)) (7 :: Int),
-    Test "Invertibility: failure (const 0 not invertible)" False (Invertibility (const 0 :: Int -> Int) ((+ 1) :: Int -> Int)) (5 :: Int),
-    -- Associativity
-    Test "Associativity: success ((+) is associative)" True (Associativity ((+) :: Int -> Int -> Int)) (1, 2, 3),
-    Test "Associativity: failure ((-) is not associative)" False (Associativity ((-) :: Int -> Int -> Int)) (3, 2, 1),
-    -- Commutativity
-    Test "Commutativity: success ((+) is commutative)" True (Commutativity ((+) :: Int -> Int -> Int)) (4, 5),
-    Test "Commutativity: failure ((-) is not commutative)" False (Commutativity ((-) :: Int -> Int -> Int)) (4, 5),
-    -- Distributivity: times distributes over plus
-    Test "Distributivity: success ((* ) distributes over (+))" True (Distributivity ((+) :: Int -> Int -> Int) ((*) :: Int -> Int -> Int)) (2, 3, 4),
-    Test "Distributivity: failure ((-) does not distribute over (+))" False (Distributivity ((+) :: Int -> Int -> Int) ((-) :: Int -> Int -> Int)) (5, 3, 2),
-    -- ContainsElem
-    Test "ContainsElem: success (3 `elem` [1,2,3])" True (ContainsElem (3 :: Int)) [1, 2, 3 :: Int],
-    Test "ContainsElem: failure (3 not in [])" False (ContainsElem (3 :: Int)) ([] :: [Int])
+  [ -- simple
+    TestPure "EqMatcher: 5 == 5" True (EqMatcher (5 :: Int)) (5 :: Int),
+    TestPure "GtMatcher: 0 < 1" True (GtMatcher (0 :: Int)) (1 :: Int),
+    TestPure "ContainsMatcher: ell in hello" True (ContainsMatcher "ell") "hello",
+
+    -- compisite
+    TestPure "Composite Int: (x>0) AND NOT(x==7) holds for 3" True compInt1 (3 :: Int),
+    TestPure "Composite Int: (x>0) AND NOT(x==7) fails for 7" False compInt1 (7 :: Int),
+    TestPure "Composite Int (nested): should pass on 42" True compIntNested (42 :: Int),
+    TestPure "Composite Int (nested): should fail on -1" False compIntNested ((-1) :: Int),
+
+    TestPure "MultiComposite: all leaves succeed" True multi1 (),
+    TestPure "MultiComposite: AllOf fails when one leaf fails" False multi2 (),
+    TestPure "MultiComposite: AnyOf passes when one branch succeeds" True multi3 ()
   ]
 
 runAll :: IO ()

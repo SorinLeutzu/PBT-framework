@@ -1,7 +1,7 @@
-module Extra where
+module Matchers.Extra where
 
-import Core
-import MatcherCombinators
+import Matchers.Core
+import Matchers.Combinators
 
 -- Between Matcher
 data BetweenMatcher a = BetweenMatcher a a
@@ -11,7 +11,12 @@ betweenMatcher low high = (LtMatcher high) `And` (GtMatcher low)
 -- Increasing list matcher
 data IncreasingList a = IncreasingList
 
-instance (Ord a, Show a) => Matcher (IncreasingList a) [a] where
+instance (Ord a, Show a) => Matcher (IncreasingList a) where
+  describe IncreasingList ok
+    | ok = "is strictly increasing"
+    | otherwise = "is not strictly increasing"
+
+instance (Ord a, Show a) => Matchable (IncreasingList a) [a] where
   matches IncreasingList list = isIncreasingList list
     where
       isIncreasingList [] = True
@@ -19,9 +24,6 @@ instance (Ord a, Show a) => Matcher (IncreasingList a) [a] where
         | x < y = isIncreasingList (y : xs)
         | otherwise = False
       isIncreasingList _ = True
-  describe IncreasingList ok
-    | ok = " is strictly increasing"
-    | otherwise = "is not strictly increasing"
   explainMatch _ list = explainMatchHelper 0 1 list
 
 explainMatcher _ _ [] = "which is strictly increasing"

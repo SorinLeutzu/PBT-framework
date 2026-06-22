@@ -1,5 +1,9 @@
 module Matchers.Core where
 
+import Tensors
+import Data.Typeable (Typeable, typeOf)
+import Data.List (intercalate)
+
 
 -- A matcher that can describe itself independently of the value it matches.
 class Matcher m where
@@ -15,6 +19,115 @@ class Matcher m => Matchable m a where
     in if ok
         then "which " ++ desc
         else "which does not " ++ desc
+
+
+data AnyMatcher a where
+  AnyMatcher :: (Matchable m a) => m -> AnyMatcher a
+
+data Composite a
+  = One (AnyMatcher a)
+  | AllOf [Composite a]
+  | AnyOf [Composite a]
+  | NotOf (Composite a)
+
+instance Matcher (Composite a) where
+  describe _ ok =
+    if ok
+      then "satisfies composite matcher"
+      else "does not satisfy composite matcher"
+
+instance Matchable (Composite a) a where
+  matches (One (AnyMatcher m)) x = matches m x
+  matches (AllOf ms) x = all (`matches` x) ms
+  matches (AnyOf ms) x = any (`matches` x) ms
+  matches (NotOf m) x = not (matches m x)
+
+  explainMatch m x =
+    snd (evalComposite m x)
+    where
+      leafExplain :: (Matchable mm a) => mm -> Bool -> String
+      leafExplain mm ok =
+        let d = describe mm ok
+         in if ok then "which " ++ d else "which does not " ++ d
+
+      evalAny :: AnyMatcher a -> a -> (Bool, String)
+      evalAny (AnyMatcher inner) v =
+        let ok = matches inner v
+         in (ok, leafExplain inner ok)
+
+      evalComposite :: Composite a -> a -> (Bool, String)
+      evalComposite (One am) v = evalAny am v
+      evalComposite (NotOf inner) v =
+        let (okInner, msgInner) = evalComposite inner v
+            ok = not okInner
+         in if ok
+              then (True, "which correctly does not match inner composite")
+              else (False, "which unexpectedly matches inner composite: " ++ msgInner)
+      evalComposite (AllOf ms) v =
+        let rs = map (\cm -> evalComposite cm v) ms
+         in case filter (not . fst) rs of
+              [] -> (True, "which satisfies all parts of the composite")
+              ((_, msg) : _) -> (False, "which fails one part of the composite: " ++ msg)
+      evalComposite (AnyOf ms) v =
+        let rs = map (\cm -> evalComposite cm v) ms
+         in case filter fst rs of
+              ((_, msg) : _) -> (True, "which satisfies one part of the composite: " ++ msg)
+              [] ->
+                ( False,
+                  "which satisfies none of the composite parts: "
+                    ++ intercalate "; " (map snd rs)
+                )
+
+
+data AnyMatch where
+  AnyMatch :: (Matchable m a) => m -> a -> AnyMatch
+
+data MultiComposite
+  = OneM AnyMatch
+  | AllOfM [MultiComposite]
+  | AnyOfM [MultiComposite]
+  | NotOfM MultiComposite
+
+instance Matcher MultiComposite where
+  describe _ ok =
+    if ok
+      then "satisfies multi composite matcher"
+      else "does not satisfy multi composite matcher"
+
+instance Matchable MultiComposite () where
+  matches mc () = fst (evalMultiComposite mc)
+
+  explainMatch mc () = snd (evalMultiComposite mc)
+
+evalAnyMatch :: AnyMatch -> (Bool, String)
+evalAnyMatch (AnyMatch m v) =
+  let ok = matches m v
+      d = describe m ok
+      msg = if ok then "which " ++ d else "which does not " ++ d
+   in (ok, msg)
+
+evalMultiComposite :: MultiComposite -> (Bool, String)
+evalMultiComposite (OneM am) = evalAnyMatch am
+evalMultiComposite (NotOfM inner) =
+  let (okInner, msgInner) = evalMultiComposite inner
+      ok = not okInner
+   in if ok
+        then (True, "which correctly does not match inner multi composite")
+        else (False, "which unexpectedly matches inner multi composite: " ++ msgInner)
+evalMultiComposite (AllOfM ms) =
+  let rs = map evalMultiComposite ms
+   in case filter (not . fst) rs of
+        [] -> (True, "which satisfies all parts of the multi composite")
+        ((_, msg) : _) -> (False, "which fails one part of the multi composite: " ++ msg)
+evalMultiComposite (AnyOfM ms) =
+  let rs = map evalMultiComposite ms
+   in case filter fst rs of
+        ((_, msg) : _) -> (True, "which satisfies one part of the multi composite: " ++ msg)
+        [] ->
+          ( False,
+            "which satisfies none of the multi composite parts: "
+              ++ intercalate "; " (map snd rs)
+          )
 
 -- Basic matchers:
 
@@ -155,6 +268,38 @@ instance (Eq a, Show a) => Matcher (ContainsElem a) where
 instance (Eq a, Show a) => Matchable (ContainsElem a) [a] where
   matches (ContainsElem e) list = e `elem` list
 
+
+newtype HasRank  = HasRank Int
+
+instance Matcher HasRank where
+  describe (HasRank r) ok | ok = "has rank " ++ show r
+                          | otherwise = " does not have rank " ++ show r
+
+instance Matchable HasRank (Tensor a b) where
+  matches (HasRank r) tensor = (length ( shape tensor)) == r
+
+newtype HasShape = HasShape [Int]
+
+instance Matcher HasShape where
+  describe (HasShape shape) ok | ok = " has shape " ++ show shape
+                                | otherwise = " does not have shape " ++ show shape
+
+instance Matchable HasShape (Tensor a b) where
+  matches (HasShape shape') tensor = shape' == ( shape tensor)
+
+
+-- newtype IsIdentityMatrix = IsIdentityMatrix
+
+-- instance Matcher IsIdentityMatrix
+--   describe IsIdentityMatrix ok | ok = " is identity matrix"
+--                                | otherwise = " is not identity matrix"
+
+-- instance Matchable IsIdentityMatrix (Tensor 2 a)
+--   matches IsIdentityMatrix tensor@(Tensor shape values) | shape !! 0 == shape !! 1 = null $  filter (\=1) $ getElementsOnMainDiagonal 0
+--                                                      where
+--                                                       size = shape !! 0
+--                                                       getElementsOnMainDiagonal map' index =
+--                                                         | otherwise = False
 -- Smart constructors
 eq :: a -> EqMatcher a
 eq = EqMatcher
