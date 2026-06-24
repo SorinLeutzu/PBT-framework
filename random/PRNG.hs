@@ -60,9 +60,14 @@ nextMersenne !seed =
    in val
 
 -- PCG
-nextpcg64 :: W.Word64 -> W.Word64
-nextpcg64 !state =
-  let newstate = state * 6364136223846793005 + 1442695040888963407
-      xorshifted = fromIntegral (((state `shiftR` 18) `xor` state) `shiftR` 27)
+pcgOutput :: W.Word64 -> W.Word64
+pcgOutput !state =
+  let xorshifted = fromIntegral (((state `shiftR` 18) `xor` state) `shiftR` 27)
       rot = fromIntegral (state `shiftR` 59)
    in (xorshifted `shiftR` rot) .|. (xorshifted `shiftL` ((-rot) .&. 31))
+
+pcgAdvance :: W.Word64 -> W.Word64
+pcgAdvance !state = state * 6364136223846793005 + 1442695040888963407
+
+nextpcg64 :: W.Word64 -> (W.Word64, W.Word64)
+nextpcg64 !state = (pcgOutput state, pcgAdvance state)
