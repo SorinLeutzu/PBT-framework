@@ -1,5 +1,7 @@
 module Config where
 
+data ExecutionMode = SequentialExec | ParallelExec deriving (Show, Eq)
+
 data ShrinkingImpl = Sequential | DeterministicParallel | NonDeterministicParallel deriving (Show, Eq)
 
 shrinkingImplementation :: ShrinkingImpl
@@ -13,3 +15,9 @@ withColors = True
 
 withEmojis :: Bool
 withEmojis = True
+
+executionMode :: ExecutionMode
+executionMode = ParallelExec
+
+numThreads :: Int
+numThreads = 4
