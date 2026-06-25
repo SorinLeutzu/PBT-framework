@@ -1,6 +1,7 @@
 module GrammarFuzzer.GrammarDefinitions where
 
 import Data.List
+import Data.Containers.ListUtils as L
 
 data Symbol = N String| T String deriving (Eq,Ord)
 
@@ -24,20 +25,6 @@ opt :: Symbol -> SymbolEntry
 opt sym = (sym, Range 0 1)
 
 
-someGrammar :: Grammar
-someGrammar = Grammar
-  [ (N "A", [ [s (T "ab"), s (N "A"), s (T "bc")]
-           , [s (N "A"), s (T "aaa"), s (N "B")]
-           ])
-  , (N "B", [ [s (T "ab"), s (N "A"), s (T "bc")]
-           , [s (N "A"), s (T "aaa")]
-           ])
-  , (N "C", [ [s (T "ab"), s (T "bc")]
-           , [s (N "B"), s (T "aaa")]
-           ])
-  ] (N "A")
-
-
 data Grammar = Grammar  { derivationRules :: [DerivationsForNonTerminal], startingPoint ::  Symbol } deriving Show
 
 -- instance show Grammar where
@@ -51,8 +38,6 @@ instance Show Symbol where
 
 data Grammar' = Grammar' { grammar :: Grammar, minimumNonTerminals :: Int, randomExpansionCount :: Int }
 
-someGrammar' = Grammar' someGrammar 4 10
-
 newtype GrammarFuzzedString = GrammarFuzzedString { getGrammarFuzzedString :: String } deriving (Eq)
 
 instance Show GrammarFuzzedString where
@@ -61,7 +46,7 @@ instance Show GrammarFuzzedString where
 data ParseTree = Tree { parent :: Symbol, children :: [ParseTree] } | Leaf { leafValue :: Symbol, pathToLeaf :: [Int]} deriving Show
 
 
-                                   
+
 data Cost = Finite Int | Infinite deriving (Eq,Show)
 
 addCost :: Cost -> Cost -> Cost
@@ -87,3 +72,28 @@ minCost Infinite Infinite = Infinite
 
 minimumCost :: [Cost]->Cost
 minimumCost costs = minimum costs
+
+isTerminal :: Symbol -> Bool
+isTerminal (T _) = True
+isTerminal (N _) = False
+
+getDeclaredNonTerminals :: Grammar -> [Symbol]
+getDeclaredNonTerminals (Grammar derivationRules _) = map (\(nonTerminal,_)->nonTerminal) derivationRules
+
+
+getUsedNonTerminals :: Grammar -> [Symbol]
+getUsedNonTerminals (Grammar derivationRules startingPoint) = L.nubOrd (startingPoint : otherUsedNonTerminals) where
+    allSymbols :: [Symbol] = map fst $ concat $ concat $ map snd derivationRules
+    otherUsedNonTerminals :: [Symbol] = filter (not . isTerminal) allSymbols
+
+
+getTerminals :: Grammar -> [Symbol]
+getTerminals (Grammar derivationRules _) = terminals where
+    allSymbols :: [Symbol] = map fst $ concat $ concat $ map snd derivationRules
+    terminals :: [Symbol] = filter isTerminal allSymbols
+
+checkStartingPoint :: Grammar -> Bool
+checkStartingPoint  grammar@(Grammar derivationRules startingPoint) = elem startingPoint (getDeclaredNonTerminals grammar)
+
+getExpansionsForNonTerminal :: Grammar -> Symbol -> [Expansion]
+getExpansionsForNonTerminal (Grammar derivationRules _) symbol = concat $ concat $ filter (\x-> x/= []) $ map (\x-> if fst x == symbol then [snd x] else []) derivationRules
