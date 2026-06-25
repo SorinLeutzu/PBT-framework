@@ -1,6 +1,5 @@
 module Matchers.Core where
 
-import Tensors
 import Data.Typeable (Typeable, typeOf)
 import Data.List (intercalate)
 
@@ -269,37 +268,6 @@ instance (Eq a, Show a) => Matchable (ContainsElem a) [a] where
   matches (ContainsElem e) list = e `elem` list
 
 
-newtype HasRank  = HasRank Int
-
-instance Matcher HasRank where
-  describe (HasRank r) ok | ok = "has rank " ++ show r
-                          | otherwise = " does not have rank " ++ show r
-
-instance Matchable HasRank (Tensor a b) where
-  matches (HasRank r) tensor = (length ( shape tensor)) == r
-
-newtype HasShape = HasShape [Int]
-
-instance Matcher HasShape where
-  describe (HasShape shape) ok | ok = " has shape " ++ show shape
-                                | otherwise = " does not have shape " ++ show shape
-
-instance Matchable HasShape (Tensor a b) where
-  matches (HasShape shape') tensor = shape' == ( shape tensor)
-
-
--- newtype IsIdentityMatrix = IsIdentityMatrix
-
--- instance Matcher IsIdentityMatrix
---   describe IsIdentityMatrix ok | ok = " is identity matrix"
---                                | otherwise = " is not identity matrix"
-
--- instance Matchable IsIdentityMatrix (Tensor 2 a)
---   matches IsIdentityMatrix tensor@(Tensor shape values) | shape !! 0 == shape !! 1 = null $  filter (\=1) $ getElementsOnMainDiagonal 0
---                                                      where
---                                                       size = shape !! 0
---                                                       getElementsOnMainDiagonal map' index =
---                                                         | otherwise = False
 -- Smart constructors
 eq :: a -> EqMatcher a
 eq = EqMatcher
