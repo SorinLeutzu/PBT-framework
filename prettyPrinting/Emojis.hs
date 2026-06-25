@@ -86,3 +86,11 @@ italics = stylisedText Italics
 
 bold :: String -> String
 bold = stylisedText Bold
+
+stripAnsi :: String -> String
+stripAnsi [] = []
+stripAnsi ('\ESC':'[':rest) = stripAnsi (drop 1 (dropWhile (/= 'm') rest))
+stripAnsi (c:cs) = c : stripAnsi cs
+
+visibleLength :: String -> Int
+visibleLength = length . stripAnsi

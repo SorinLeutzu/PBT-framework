@@ -103,6 +103,44 @@ finishProgressBar pb@(ProgressBar total current width label) = do
   renderProgressBar fullPb
   putStrLn ""
 
+
+
+
+-- Table
+
+data Table = Table
+  { tHeaders :: [String]
+  , tRows    :: [[String]]
+  }
+
+renderTable :: Table -> String
+renderTable (Table headers rows) =
+  let cols = length headers
+      allRows = headers : rows
+      colRange = [0 .. cols -1]
+
+      cellAt row col | col < length row = row !! col
+                     | otherwise = ""
+
+     
+
+      colWidths = map colWidth colRange
+        where colWidth c = maximum $ map (\r -> visibleLength (cellAt r c)) allRows
+      
+      padCell :: Int -> String -> String
+      padCell w cell =
+        let padding = w - visibleLength cell
+            half = padding `div` 2
+        in replicate half ' ' ++ cell ++ replicate (padding - half) ' '
+
+      formatRow row = "│ " ++ intercalate " │ " (zipWith padCell colWidths (map (cellAt row) colRange)) ++ " │"
+      topBorder    = "┌─" ++ intercalate "─┬─" (map (\cw -> replicate cw '─') colWidths) ++ "─┐"
+      midSep       = "├─" ++ intercalate "─┼─" (map (\cw -> replicate cw '─') colWidths) ++ "─┤"
+      bottomBorder = "└─" ++ intercalate "─┴─" (map (\cw -> replicate cw '─') colWidths) ++ "─┘"
+      
+  in unlines $ [topBorder, formatRow headers, midSep]++ intercalate [midSep] (map (\r -> [formatRow r]) rows) ++ [bottomBorder]
+
+
 -- Spinner
 
 data Spinner = Spinner
