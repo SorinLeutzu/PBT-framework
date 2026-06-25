@@ -3,19 +3,17 @@
 
 module GrammarFuzzer.Grammar where
 
-import Data.Containers.ListUtils as L
-import Data.Graph
-import Data.List
-
-import Random
-import Control.Monad (foldM)
-
-import Data.Map qualified as M
-
-
+import Random.Core hiding (GrammarFuzzedString)
+import Shrinking.Core
 
 import GrammarFuzzer.GrammarDefinitions
-import GrammarFuzzer.GrammarHelper
+import GrammarFuzzer.Cost
+import GrammarFuzzer.Expansion
+import GrammarFuzzer.Construction
+import GrammarFuzzer.Validation
+import GrammarFuzzer.Display
+import GrammarFuzzer.FileSystem
+import GrammarFuzzer.Examples
 
 
 displayGrammar :: Grammar -> IO()
@@ -71,105 +69,8 @@ main'' = do
 
 
 
-someGrammar2 :: Grammar
-someGrammar2 = Grammar
-  [ (N "A", [ [s (T "ab"), s (N "A"), s (T "bc")]
-           , [s (N "B"), s (T "aaa"), s (N "B")]
-           ])
-  , (N "B", [ [s (T "ab"), s (T "ffff"), s (T "bc")]
-           , [s (N "A"), s (T "aaa")]
-           ])
-  , (N "C", [ [s (T "ab"), s (T "bc")]
-           , [s (N "B"), s (T "aaa")]
-           ])
-  ] (N "A")
-
-someGrammar3 :: Grammar
-someGrammar3 =  Grammar
-  [ (N "A", [ [s (T "ab"), s (N "A"), s (T "bc")]
-           , [s (N "B"), s (T "aaa"), s (N "A")]
-           ])
-  , (N "B", [ [s (T "ab"), s (T "ffff"), s (T "bc")]
-           , [s (N "A"), s (T "aaa")]
-           , [s (N "A")]
-           ])
-  , (N "C", [ [s (T "ab"), s (T "bc")]
-           , [s (N "B"), s (T "aaa")]
-           ])
-  , (N "D", [ [s (N "D"), s (N "D")]
-           , [s (N "D"), s (T "aaa"), s (N "D"), s (N "D")]
-           ])
-  ] (N "A")
-
-someGrammar4 :: Grammar
-someGrammar4 =  Grammar
-  [ (N "A",  [ [s (T "bla")]
-           ])
-  ] (N "A")
-
-
-grammarDigits :: Grammar
-grammarDigits = Grammar
-  [ (N "Digits", [ [s (T "0"), s (N "Digits")], [s (T "1"), s (N "Digits")], [s (T "2"), s (N "Digits")]
-                 , [s (T "3"), s (N "Digits")], [s (T "4"), s (N "Digits")], [s (T "5"), s (N "Digits")]
-                 , [s (T "6"), s (N "Digits")], [s (T "7"), s (N "Digits")], [s (T "8"), s (N "Digits")], [s (T "9"), s (N "Digits")]
-                 , [s (T "0")], [s (T "1")], [s (T "2")], [s (T "3")], [s (T "4")], [s (T "5")], [s (T "6")], [s (T "7")], [s (T "8")], [s (T "9")]
-                 ])
-  ] (N "Digits")
-
-grammarGreeting :: Grammar
-grammarGreeting = Grammar
-  [ (N "Greeting", [ [s (T "hi")]
-                   , [s (T "hi"), s (T " "), s (N "Greeting")]
-                   ])
-  ] (N "Greeting")
-
-grammarAB :: Grammar
-grammarAB = Grammar
-  [ (N "S", [ [s (T "a"), s (N "S")], [s (T "b"), s (N "S")], [s (T "a")], [s (T "b")] ])
-  ] (N "S")
-
-grammarParens :: Grammar
-grammarParens = Grammar
-  [ (N "P", [ [s (T "("), s (T ")"), s (N "P")]
-            , [s (T "("), s (N "P"), s (T ")"), s (N "P")]
-            , [s (T "("), s (T ")")]
-            ])
-  ] (N "P")
-
-grammarArithmetic' :: Grammar
-grammarArithmetic' = Grammar
-  [ (N "Expr",  [ [s (N "Term")]
-                , [s (N "Expr"), s (T " + "), s (N "Term")]
-                ])
-  , (N "Term",  [ [s (N "Factor")]
-                , [s (N "Term"), s (T " * "), s (N "Factor")]
-                ])
-  , (N "Factor", [ [s (N "Number")]
-                 , [s (T "("), s (N "Expr"), s (T ")")]
-                 ])
-  , (N "Number", [ [s (N "Digit"), s (N "Number")]
-                 , [s (N "Digit")]
-                 ])
-  , (N "Digit",  [ [s (T "0")], [s (T "1")], [s (T "2")], [s (T "3")], [s (T "4")]
-                 , [s (T "5")], [s (T "6")], [s (T "7")], [s (T "8")], [s (T "9")]
-                 ])
-  ] (N "Expr")
-
 getStringFromGrammar :: Grammar' -> String
-getStringFromGrammar grammar' = evaluateParseTree $ constructParseTree grammar' 
-
-
-simpleFileSystemTree :: ParseTree
-simpleFileSystemTree =
-  Tree (T "D root")
-    [ Leaf (T "f hello.txt Hello from the fuzzer") []
-    , Tree (T "D docs")
-        [ Leaf (T "f readme.md # Readme\nThis was generated.") []
-        , Leaf (T "E empty") []
-        ]
-    , Leaf (T "f notes.txt line1\nline2\nline3") []
-    ]
+getStringFromGrammar grammar' = evaluateParseTree $ constructParseTree grammar'
 
 
 buildFileSystemFromGrammar :: ParseTree -> IO ()
@@ -184,3 +85,20 @@ main3 = do
     let tree = constructParseTree (Grammar' grammarArithmetic' 40 20)
     let string = evaluateParseTree tree
     putStrLn $ string
+
+main7 :: IO()
+main7 = do
+    let tree = constructParseTree (Grammar' grammarArithmetic' 3 2)
+    putStrLn $ prettyPrint tree
+
+main8 :: IO()
+main8 = do
+    let tree = constructParseTree (Grammar' grammarArithmetic' 3 2)
+    let string = evaluateParseTree tree
+    putStrLn $ string
+
+instance Arbitrary GrammarFuzzedString (Grammar,Int,Int) where
+  arbitrary (grammar, minimumNonTerminals, randomExpansions) = nextGrammarFuzzedString (Grammar' grammar minimumNonTerminals randomExpansions)
+
+instance Shrinkable GrammarFuzzedString where
+  shrink (GrammarFuzzedString s) = map GrammarFuzzedString (shrink s)
