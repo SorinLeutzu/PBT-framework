@@ -12,18 +12,17 @@ where
 
 import Control.Monad (replicateM, when)
 import Control.Monad.Writer (Writer, runWriter, tell)
+import Control.DeepSeq (NFData)
 import Data.List (take)
 import Helper (parallelMap)
-import Matchers.Core (Matcher (..), eq, gt)
-import Random qualified as Rand
+import Matchers.Core (Matchable (..), Matcher (..), eq, gt)
+import Random.Core qualified as Rand
+import Shrinking.Core qualified as Shrink
+import Defs
+import PrettyPrinting.Renders
 
-data LogEntry a = LogEntry
-  { leInput :: a,
-    lePassed :: Bool
-  }
-  deriving (Eq, Show)
 
-applyShrinkRaw :: (Matcher m a) => a -> m -> (a -> [a]) -> Writer [LogEntry a] a
+applyShrinkRaw :: (Matchable m a, NFData a) => a -> m -> (a -> [a]) -> Writer [LogEntry a] a
 applyShrinkRaw element matcher getShrinkingCandidates = do
   let initialPassed = matches matcher element
   tell [LogEntry element initialPassed]
@@ -44,7 +43,7 @@ applyShrinkRaw element matcher getShrinkingCandidates = do
       | not passed = Just (c, passed)
       | otherwise = findFirstFailure rest
 
-assertThenShrinkRaw :: (Matcher m a) => a -> m -> (a -> [a]) -> Writer [LogEntry a] (Maybe a)
+assertThenShrinkRaw :: (Matchable m a, NFData a) => a -> m -> (a -> [a]) -> Writer [LogEntry a] (Maybe a)
 assertThenShrinkRaw element matcher getShrinkingCandidates
   | matches matcher element = do
       tell [LogEntry element True]
@@ -53,30 +52,30 @@ assertThenShrinkRaw element matcher getShrinkingCandidates
       minimal <- applyShrinkRaw element matcher getShrinkingCandidates
       return (Just minimal)
 
-renderLog :: (Show a) => LogEntry a -> String
-renderLog (LogEntry x passed) =
-  "Tried input " ++ show x ++ " - Assertion " ++ (if passed then "passed" else "failed")
+-- renderLog :: (Show a) => LogEntry a -> String
+-- renderLog (LogEntry x passed) =
+--   "Tried input " ++ show x ++ " - Assertion " ++ (if passed then "passed" else "failed")
 
-renderLogs :: (Show a) => [LogEntry a] -> [String]
-renderLogs = map renderLog
+-- renderLogs :: (Show a) => [LogEntry a] -> [String]
+-- renderLogs = map renderLog
 
-formatResult :: (Show a) => Maybe a -> String
-formatResult Nothing = "Matching succeeded"
-formatResult (Just minimal) = "Matching failled. Searching for simplest counter example " ++ show minimal
+-- formatResult :: (Show a) => Maybe a -> String
+-- formatResult Nothing = "Matching succeeded"
+-- formatResult (Just minimal) = "Matching failed. Searching for simplest counter example " ++ show minimal
 
-applyShrink :: (Matcher m a, Show a) => a -> m -> (a -> [a]) -> (a, [String])
+applyShrink :: (Matchable m a, Show a, NFData a) => a -> m -> (a -> [a]) -> (a, [String])
 applyShrink el matcher shrinker =
   let (res, logs) = runWriter (applyShrinkRaw el matcher shrinker)
    in (res, renderLogs logs)
 
-assertThenShrink :: (Matcher m a, Show a) => a -> m -> (a -> [a]) -> (String, [String])
+assertThenShrink :: (Matchable m a, Show a, NFData a) => a -> m -> (a -> [a]) -> (String, [String])
 assertThenShrink el matcher shrinker =
   let (maybeMin, logs) = runWriter (assertThenShrinkRaw el matcher shrinker)
       msg = formatResult maybeMin
    in (msg, renderLogs logs)
 
 t1 :: (Int, [String])
-t1 = applyShrink (64 :: Int) (eq (8 :: Int)) Rand.shrinkIntStd
+t1 = applyShrink (64 :: Int) (eq (8 :: Int)) Shrink.shrinkInt
 
 t2 :: (String, [String])
-t2 = assertThenShrink (40940 :: Int) (eq (144 :: Int)) Rand.shrinkIntAgg
+t2 = assertThenShrink (40940 :: Int) (eq (144 :: Int)) Shrink.shrinkInt

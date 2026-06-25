@@ -1,10 +1,17 @@
 module Helper (parallelMap) where
 
-import GHC.Conc (par, pseq)
+import Control.DeepSeq (NFData, force)
+import Control.Exception (evaluate)
+import Control.Concurrent (forkIO)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Monad (forM)
+import System.IO.Unsafe (unsafePerformIO)
 
-parallelMap :: (a -> b) -> [a] -> [b]
-parallelMap f [] = []
-parallelMap f (x:xs) = fx `par` fxs `pseq` (fx : fxs)
-  where
-    fx  = f x
-    fxs = parallelMap f xs
+parallelMap :: (NFData b) => (a -> b) -> [a] -> [b]
+parallelMap _ [] = []
+parallelMap f xs = unsafePerformIO $ do
+  mvars <- forM xs $ \x -> do
+    mv <- newEmptyMVar
+    _ <- forkIO $ evaluate (force (f x)) >>= putMVar mv
+    return mv
+  mapM takeMVar mvars
