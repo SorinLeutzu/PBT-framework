@@ -10,11 +10,14 @@ module Demo
   )
 where
 
-import Control.Monad (replicateM, when)
+import Control.Monad (forM)
 import Control.Monad.Writer (Writer, runWriter, tell)
-import Control.DeepSeq (NFData)
-import Data.List (take)
-import Helper (parallelMap)
+import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.DeepSeq (NFData, force)
+import Control.Exception (evaluate)
+import System.IO.Unsafe (unsafePerformIO)
+import Config (ShrinkingImpl(..), shrinkingImplementation, chunkSize)
 import Matchers.Core (Matchable (..), Matcher (..), eq, gt)
 import Random.Core qualified as Rand
 import Shrinking.Core qualified as Shrink
@@ -32,16 +35,68 @@ applyShrinkRaw element matcher getShrinkingCandidates = do
   where
     go lastFail [] = return lastFail
     go lastFail candidates = do
-      let results = parallelMap (\c -> (c, matches matcher c)) candidates
-      tell (map (\(c, passed) -> LogEntry c passed) results)
-      case findFirstFailure results of
+      let (tested, firstFail) = case shrinkingImplementation of
+            Sequential               -> shrinkSeq candidates
+            DeterministicParallel    -> shrinkParDet candidates
+            NonDeterministicParallel -> shrinkParNonDet candidates
+      tell (map (\(c, passed) -> LogEntry c passed) tested)
+      case firstFail of
         Nothing -> return lastFail
-        Just (firstFail, _) -> go firstFail (getShrinkingCandidates firstFail)
-    
-    findFirstFailure [] = Nothing
-    findFirstFailure ((c, passed) : rest)
-      | not passed = Just (c, passed)
-      | otherwise = findFirstFailure rest
+        Just f  -> go f (getShrinkingCandidates f)
+
+    shrinkSeq [] = ([], Nothing)
+    shrinkSeq (c:rest) =
+      let passed = matches matcher c
+      in if not passed
+         then ([(c, passed)], Just c)
+         else let (more, result) = shrinkSeq rest
+              in ((c, passed) : more, result)
+
+    evalChunk [] = ([], Nothing)
+    evalChunk (c:rest) =
+      let passed = matches matcher c
+      in if not passed
+         then ([(c, passed)], Just c)
+         else let (more, result) = evalChunk rest
+              in ((c, passed) : more, result)
+
+    spawnChunkThreads chunks = forM chunks $ \chunk -> do
+      mv <- newEmptyMVar
+      tid <- forkIO $ evaluate (force (evalChunk chunk)) >>= putMVar mv
+      return (tid, mv)
+
+    shrinkParDet candidates = unsafePerformIO $ do
+      entries <- spawnChunkThreads (chunksOf chunkSize candidates)
+      scanOrdered entries
+
+    scanOrdered [] = return ([], Nothing)
+    scanOrdered ((tid, mv) : rest) = do
+      (tested, result) <- takeMVar mv
+      case result of
+        Just f  -> do mapM_ (\(t, _) -> killThread t) rest
+                      return (tested, Just f)
+        Nothing -> do (moreTested, laterResult) <- scanOrdered rest
+                      return (tested ++ moreTested, laterResult)
+
+    shrinkParNonDet candidates = unsafePerformIO $ do
+      let chunks = chunksOf chunkSize candidates
+      chan <- newEmptyMVar
+      tids <- forM chunks $ \chunk ->
+        forkIO $ evaluate (force (evalChunk chunk)) >>= putMVar chan
+      scanRacing tids (length chunks) chan
+
+    scanRacing _ 0 _ = return ([], Nothing)
+    scanRacing tids remaining chan = do
+      (tested, result) <- takeMVar chan
+      case result of
+        Just f  -> do mapM_ killThread tids
+                      return (tested, Just f)
+        Nothing -> do (more, later) <- scanRacing tids (remaining - 1) chan
+                      return (tested ++ more, later)
+
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf _ [] = []
+chunksOf n xs = let (h, t) = splitAt n xs in h : chunksOf n t
 
 assertThenShrinkRaw :: (Matchable m a, NFData a) => a -> m -> (a -> [a]) -> Writer [LogEntry a] (Maybe a)
 assertThenShrinkRaw element matcher getShrinkingCandidates
