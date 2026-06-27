@@ -1,6 +1,7 @@
 module Shrinking.Core where
 
 import Random.Core (SortedList(..), printableChars, alphaNumChars)
+import Config (TupleShrinkStrategy(..), tupleShrinkStrategy)
 import Data.List (nub, sort)
 
 class Shrinkable a where
@@ -29,10 +30,20 @@ instance Shrinkable Char where
   shrink c = filter (< c) printableChars
 
 instance (Shrinkable a, Shrinkable b) => Shrinkable (a, b) where
-  shrink (a, b) = [(a', b) | a' <- shrink a] ++ [(a, b') | b' <- shrink b]
+  shrink (a, b) = case tupleShrinkStrategy of
+    PerDimension  -> [(a', b) | a' <- shrink a] ++ [(a, b') | b' <- shrink b]
+    AllDimensions ->
+      if null (shrink a) && null (shrink b)
+        then []
+        else [(shrinkStep a, shrinkStep b)]
 
 instance (Shrinkable a, Shrinkable b, Shrinkable c) => Shrinkable (a, b, c) where
-  shrink (a, b, c) = [(a', b, c) | a' <- shrink a] ++ [(a, b', c) | b' <- shrink b]  ++ [(a, b, c') | c' <- shrink c]
+  shrink (a, b, c) = case tupleShrinkStrategy of
+    PerDimension  -> [(a', b, c) | a' <- shrink a] ++ [(a, b', c) | b' <- shrink b] ++ [(a, b, c') | c' <- shrink c]
+    AllDimensions ->
+      if null (shrink a) && null (shrink b) && null (shrink c)
+        then []
+        else [(shrinkStep a, shrinkStep b, shrinkStep c)]
 
 instance (Shrinkable a, Ord a) => Shrinkable (SortedList a) where
   shrink (SortedList list) = map (SortedList . sort) (shrinkList shrinkElem list 1)
@@ -53,6 +64,12 @@ shrinkInt x = [0] ++ [abs x | x < 0] ++ takeWhile (\v -> abs v > 0 && abs v < ab
 shrinkBool :: Bool -> [Bool]
 shrinkBool True = [False]
 shrinkBool False = []
+
+shrinkStep :: (Shrinkable a) => a -> a
+shrinkStep x = case shrink x of
+  (_ : y : _) -> y
+  (y : _)     -> y
+  []          -> x
 
 shrinkFirst :: (a -> [a]) -> a -> a
 shrinkFirst f x = case f x of

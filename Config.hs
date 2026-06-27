@@ -4,8 +4,13 @@ data ExecutionMode = SequentialExec | ParallelExec deriving (Show, Eq)
 
 data ShrinkingImpl = Sequential | DeterministicParallel | NonDeterministicParallel deriving (Show, Eq)
 
+data TupleShrinkStrategy = PerDimension | AllDimensions deriving (Show, Eq)
+
 shrinkingImplementation :: ShrinkingImpl
 shrinkingImplementation = DeterministicParallel
+
+tupleShrinkStrategy :: TupleShrinkStrategy
+tupleShrinkStrategy = PerDimension
 
 chunkSize :: Int
 chunkSize = 20
