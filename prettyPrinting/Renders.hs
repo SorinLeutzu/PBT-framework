@@ -2,7 +2,7 @@ module PrettyPrinting.Renders where
 
 import PrettyPrinting.Emojis
 import Config (withColors, withEmojis)
-import Defs
+import TestTree.Types (LogEntry(..))
 import Data.List (intercalate)
 import System.IO (hFlush, stdout)
 

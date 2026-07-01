@@ -23,6 +23,7 @@ allowedFolders =
   , "baseDir"
   , "ceva"
   , "studentVersion"
+  , "diagrams"
   ]
 
 cleanDirectory :: FilePath -> IO ()
