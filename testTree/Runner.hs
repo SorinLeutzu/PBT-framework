@@ -34,7 +34,7 @@ runTestCasePure (FuzzCase name matcher shrinker iters) =
   let loop i prng
         | i == iters = TestPass ("All " ++ show iters ++ " cases passed")
         | otherwise =
-            let (x, prng') = Rand.execRandom prng (Rand.arbitrary ())
+            let (x, prng') = Rand.runRandom (Rand.arbitrary ()) prng
             in if matches matcher x
                  then loop (i + 1) prng'
                  else
@@ -53,7 +53,7 @@ runTestCasePure (FuzzGenCase name generator prop iters) =
       loop i prng
         | i == iters = TestPass ("All " ++ show iters ++ " cases passed")
         | otherwise =
-            let (x, prng') = Rand.execRandom prng (genA generator)
+            let (x, prng') = Rand.runRandom (genA generator) prng
             in if matches pm x
                  then loop (i + 1) prng'
                  else

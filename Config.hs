@@ -19,7 +19,7 @@ withColors :: Bool
 withColors = True
 
 withEmojis :: Bool
-withEmojis = True
+withEmojis = False
 
 executionMode :: ExecutionMode
 executionMode = ParallelExec

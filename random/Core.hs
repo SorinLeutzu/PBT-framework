@@ -69,14 +69,14 @@ type Rnd a = State PRNG a
 
 type Gen a = Rnd a
 
-runRandom :: PRNG -> Rnd a -> a
-runRandom = flip evalState
+runRandom :: Rnd a -> PRNG -> (a, PRNG)
+runRandom = runState
 
-evalRandom :: PRNG -> Rnd a -> PRNG
-evalRandom = flip execState
+evalRandom :: Rnd a -> PRNG -> a
+evalRandom = evalState
 
-execRandom :: PRNG -> Rnd a -> (a, PRNG)
-execRandom = flip runState
+execRandom :: Rnd a -> PRNG -> PRNG
+execRandom = execState
 
 nextWord64 :: Rnd W.Word64
 nextWord64 = do

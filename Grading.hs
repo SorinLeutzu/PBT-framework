@@ -1,5 +1,10 @@
 module Grading where
 
+import Control.DeepSeq (force)
+import Control.Exception (evaluate)
+import Config (withEmojis)
+import PrettyPrinting.Emojis (EmojiName (..), emoji)
+import PrettyPrinting.Renders
 import TestTree
 import Text.Printf (printf)
 
@@ -10,11 +15,15 @@ data GradedResult
   = GradedNode String Grade Bool [GradedResult]
   | GradedLeaf String Double TestOutcome Grade
 
-gradeTree :: TestTree -> GradedResult
-gradeTree (Describe policy name children) =
-  GradedNode name totalGrade allPass gradedChildren
+
+gradeTreeFrom :: TestTree -> [TestOutcome] -> (GradedResult, [TestOutcome])
+gradeTreeFrom (Describe policy name children) outs =
+  (GradedNode name totalGrade allPass gradedChildren, rest)
   where
-    gradedChildren = map gradeTree children
+    (gradedChildren, rest) = foldl step ([], outs) children
+    step (acc, os) child =
+      let (r, os') = gradeTreeFrom child os
+      in (acc ++ [r], os')
     passed = map resultPassed gradedChildren
     allPass = case policy of
       AllPass      -> and passed
@@ -25,13 +34,19 @@ gradeTree (Describe policy name children) =
       | null grades                     = Grade 0.0
       | all isGradedLeaf gradedChildren = Grade (sum grades)
       | otherwise                       = Grade (sum grades / fromIntegral (length grades))
-gradeTree (Test weight tc) =
-  GradedLeaf (caseName tc) weight outcome grade
+gradeTreeFrom (Test weight tc) (o : rest) =
+  (GradedLeaf (caseName tc) weight o grade, rest)
   where
-    outcome = runTestCase tc
-    grade = case outcome of
+    grade = case o of
       TestPass _ -> Grade weight
       TestFail _ -> Grade 0.0
+gradeTreeFrom (Test weight tc) [] =
+  (GradedLeaf (caseName tc) weight (TestFail "internal error: no outcome") (Grade 0.0), [])
+
+gradeTree :: TestTree -> GradedResult
+gradeTree tree = fst (gradeTreeFrom tree outcomes)
+  where
+    outcomes = map (\(TestLeaf _ tc) -> runTestCase tc) (collectLeaves tree)
 
 resultPassed :: GradedResult -> Bool
 resultPassed (GradedNode _ _ p _) = p
@@ -42,6 +57,10 @@ resultGrade :: GradedResult -> Grade
 resultGrade (GradedNode _ g _ _) = g
 resultGrade (GradedLeaf _ _ _ g) = g
 
+gradedName :: GradedResult -> String
+gradedName (GradedNode name _ _ _) = name
+gradedName (GradedLeaf name _ _ _) = name
+
 isGradedLeaf :: GradedResult -> Bool
 isGradedLeaf GradedLeaf {} = True
 isGradedLeaf _ = False
@@ -50,34 +69,94 @@ passLabel :: Bool -> String
 passLabel True  = "PASS"
 passLabel False = "FAIL"
 
+runLeavesWithProgress :: [TestLeaf] -> IO [TestOutcome]
+runLeavesWithProgress leaves = go 0 leaves
+  where
+    total = length leaves
+    barWidth = 30
+    labelWidth = 42
+
+    bar current label = ProgressBar total current barWidth (progressLabel label)
+
+    go done [] = do
+      renderProgressBar (bar done "all tests executed")
+      putStrLn ""
+      pure []
+    go done (TestLeaf _ tc : rest) = do
+      renderProgressBar (bar done (caseName tc))
+      out <- evaluate (force (runTestCase tc))
+      (out :) <$> go (done + 1) rest
+
+    progressLabel name =
+      let t = if length name > labelWidth
+              then take (labelWidth - 3) name ++ "..."
+              else name
+      in t ++ replicate (labelWidth - length t) ' ' ++ " "
+
+
+fmt2 :: Double -> String
+fmt2 = printf "%.2f"
+
+statusText :: Bool -> String
+statusText True  = condGreen "PASS"
+statusText False = condRed "FAIL"
+
 showGradedResult :: GradedResult -> String
 showGradedResult = renderAt 0
   where
-    renderAt indent (GradedNode name (Grade g) allPass children) = pad indent ++ "Suite: " ++ name ++ " [Grade: " ++ printf "%.2f" g
-        ++ ", " ++ passLabel allPass ++ "]\n" ++ concatMap (renderAt (indent + 2)) children
+    renderAt indent (GradedNode name (Grade g) allPass children) =
+      renderSuiteHeader indent name
+        ++ " " ++ statusText allPass
+        ++ " [" ++ condBold (fmt2 g ++ " pts") ++ "]\n"
+        ++ concatMap (renderAt (indent + 2)) children
 
-    renderAt indent (GradedLeaf name weight outcome (Grade g)) =  pad indent ++ "Test: " ++ name ++ " (weight " ++ printf "%.2f" weight ++ "%)"
-        ++ " -> " ++ showOutcome outcome ++ " [" ++ printf "%.2f" g ++ " pts]\n"
+    renderAt indent (GradedLeaf name weight outcome (Grade g)) =
+      let title = name ++ " (weight " ++ fmt2 weight ++ "%) [" ++ fmt2 g ++ " pts]"
+      in case outcome of
+           TestPass msg -> renderPassLine indent title (firstLine msg) ++ "\n"
+           TestFail msg -> renderFailLine indent title (firstLine msg) ++ "\n"
 
-    showOutcome (TestPass msg) = "PASS: " ++ firstLine msg
-    showOutcome (TestFail msg) = "FAIL: " ++ firstLine msg
     firstLine = takeWhile (/= '\n')
-    pad n = replicate n ' '
 
 printFinalGrade :: Grade -> GradedResult -> IO ()
 printFinalGrade (Grade grade) result = do
+  let passed = resultPassed result
+      statusEmoji
+        | not withEmojis        = ""
+        | not passed            = " " ++ emoji Alarm
+        | grade >= 100.0 - 1e-9 = " " ++ emoji AllPoints
+        | otherwise             = " " ++ emoji Happy
   putStrLn ""
-  putStrLn "Final Grade"
-  printf "Grade: %.2f / 100.00\n" grade
-  putStrLn ("Status: " ++ passLabel (resultPassed result))
+  putStrLn (renderSuiteHeader 0 "Final Grade")
+  putStrLn ("  Grade:  " ++ condBold (fmt2 grade ++ " / 100.00"))
+  putStrLn ("  Status: " ++ statusText passed ++ statusEmoji)
   putStrLn ""
+
+gradeSummaryTable :: GradedResult -> String
+gradeSummaryTable result =
+  renderTable Table
+    { tHeaders = ["Suite", "Grade", "Status"]
+    , tRows    = map row children ++ [totalRow]
+    }
+  where
+    children = case result of
+      GradedNode _ _ _ cs -> cs
+      leaf                -> [leaf]
+    row r =
+      let Grade g = resultGrade r
+      in [gradedName r, fmt2 g, statusText (resultPassed r)]
+    Grade total = resultGrade result
+    totalRow = [condBold "Total", condBold (fmt2 total), statusText (resultPassed result)]
 
 gradeAndPrint :: TestTree -> IO ()
 gradeAndPrint tree = do
-  let result = gradeTree tree
+  outcomes <- runLeavesWithProgress (collectLeaves tree)
+  let (result, _) = gradeTreeFrom tree outcomes
   printFinalGrade (resultGrade result) result
-  putStrLn "Detailed Results:"
+  putStrLn (renderSuiteHeader 0 "Detailed Results")
+  putStrLn ""
   putStrLn (showGradedResult result)
+  putStr (gradeSummaryTable result)
 
 testGrading :: IO ()
 testGrading = do

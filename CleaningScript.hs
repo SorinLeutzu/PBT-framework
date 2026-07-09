@@ -1,3 +1,5 @@
+module CleaningScript where
+
 import System.Directory
 import System.FilePath
 import Control.Monad
@@ -10,6 +12,7 @@ allowedExtensions =
   , ".html"
   , ".md"
   , ".json"
+  , ".tex"
   ]
 
 allowedNames :: [String]
@@ -24,6 +27,7 @@ allowedFolders =
   , "ceva"
   , "studentVersion"
   , "diagrams"
+  , "figures"
   ]
 
 cleanDirectory :: FilePath -> IO ()
