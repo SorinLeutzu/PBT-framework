@@ -7,7 +7,7 @@ import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import System.Environment (getArgs)
 import Text.Printf (printf)
 
-import Random.Core (PRNG(..), seedXor, runRandom)
+import Random.Core (PRNG(..), seedXor, evalRandom)
 import GrammarFuzzer.GrammarDefinitions
 import GrammarFuzzer.Construction (constructParseTreeRnd)
 import GrammarFuzzer.Display (evaluateParseTree)
@@ -23,7 +23,7 @@ readScale = do
 
 genLen :: Grammar' -> Int -> Int
 genLen g' salt =
-  length (evaluateParseTree (runRandom (PRNG_Xor (seedXor + fromIntegral salt)) (constructParseTreeRnd g')))
+  length (evaluateParseTree (evalRandom (constructParseTreeRnd g') (PRNG_Xor (seedXor + fromIntegral salt))))
 
 benchPure :: (Int -> Int) -> IO Double
 benchPure f = go 1

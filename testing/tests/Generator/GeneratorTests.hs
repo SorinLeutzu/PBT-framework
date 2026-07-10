@@ -23,11 +23,11 @@ pcgOutputs seed n = take n (map pcgOutput (iterate pcgAdvance seed))
 
 genInts :: PRNG -> Int -> Int -> Int -> [Int]
 genInts prng lo hi n = take n (go prng)
-  where go p = let (v, p') = execRandom p (nextIntRange lo hi) in v : go p'
+  where go p = let (v, p') = runRandom (nextIntRange lo hi) p in v : go p'
 
 genDoubles :: PRNG -> Double -> Double -> Int -> [Double]
 genDoubles prng lo hi n = take n (go prng)
-  where go p = let (v, p') = execRandom p (nextDoubleRange lo hi) in v : go p'
+  where go p = let (v, p') = runRandom (nextDoubleRange lo hi) p in v : go p'
 
 adjacentDiffer :: Eq a => [a] -> Bool
 adjacentDiffer xs = and (zipWith (/=) xs (drop 1 xs))

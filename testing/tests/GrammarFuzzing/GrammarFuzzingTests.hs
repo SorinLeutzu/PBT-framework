@@ -147,7 +147,7 @@ phase2 _ _ tree 0 = (tree, 0)
 phase2 prng grammar tree k
   | null (getExpandableNodes tree) = (tree, 0)
   | otherwise =
-      let (tree', prng') = execRandom prng (replaceLeafWithNonTerminatingExpansionRandom tree grammar)
+      let (tree', prng') = runRandom (replaceLeafWithNonTerminatingExpansionRandom tree grammar) prng
           (final, done)  = phase2 prng' grammar tree' (k - 1)
       in (final, done + 1)
 
@@ -155,7 +155,7 @@ phase3 :: PRNG -> Grammar -> ParseTree -> ParseTree
 phase3 prng grammar tree
   | null (getExpandableNodes tree) = tree
   | otherwise =
-      let (tree', prng') = execRandom prng (replaceMinimumCostLeafWithExpansionRandom tree grammar)
+      let (tree', prng') = runRandom (replaceMinimumCostLeafWithExpansionRandom tree grammar) prng
       in phase3 prng' grammar tree'
 
 phaseChecks :: String -> Grammar -> PRNG -> [(String, Bool)]

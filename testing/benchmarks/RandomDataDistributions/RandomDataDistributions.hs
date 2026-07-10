@@ -16,11 +16,11 @@ readScale = do
 
 drawInts :: PRNG -> Int -> Int -> Int -> [Int]
 drawInts prng lo hi n = take n (go prng)
-  where go p = let (v, p') = execRandom p (nextIntRange lo hi) in v : go p'
+  where go p = let (v, p') = runRandom (nextIntRange lo hi) p in v : go p'
 
 drawBools :: PRNG -> Int -> [Bool]
 drawBools prng n = take n (go prng)
-  where go p = let (v, p') = execRandom p nextBool in v : go p'
+  where go p = let (v, p') = runRandom nextBool p in v : go p'
 
 histogram :: Int -> Int -> [Int] -> [(Int, Int)]
 histogram lo hi xs =

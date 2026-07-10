@@ -34,7 +34,7 @@ finiteShrink n = length (shrink n) >= 0
 
 randomInts :: Int -> [Int]
 randomInts n = take n (go (PRNG_Xor seedXor))
-  where go p = let (v, p') = execRandom p nextInt in v : go p'
+  where go p = let (v, p') = runRandom nextInt p in v : go p'
 
 terminationChecks :: [(String, Bool)]
 terminationChecks =
