@@ -38,6 +38,7 @@ data TestCase where
   UnitCase :: (Matchable m a, Show a) => String -> m -> a -> TestCase
   FuzzCase :: (Rand.Arbitrary a (), Show a, Matchable m a, NFData a) => String -> m -> (a -> [a]) -> Int -> TestCase
   FuzzGenCase :: (Show a, NFData a) => String -> Generator a -> (a -> Bool) -> Int -> TestCase
+  FuzzGenMatcherCase :: (Show a, Matchable m a, NFData a) => String -> Generator a -> m -> Int -> TestCase
 
 data TestTree where
   Describe :: GradingPolicy -> String -> [TestTree] -> TestTree
@@ -59,11 +60,13 @@ caseName :: TestCase -> String
 caseName (UnitCase name _ _) = name
 caseName (FuzzCase name _ _ _) = name
 caseName (FuzzGenCase name _ _ _) = name
+caseName (FuzzGenMatcherCase name _ _ _) = name
 
 instance Show TestCase where
   show (UnitCase name _ _) = "UnitCase \"" ++ name ++ "\""
   show (FuzzCase name _ _ iters) = "FuzzCase \"" ++ name ++ "\" (" ++ show iters ++ " iterations)"
   show (FuzzGenCase name _ _ iters) = "FuzzGenCase \"" ++ name ++ "\" (" ++ show iters ++ " iterations)"
+  show (FuzzGenMatcherCase name _ _ iters) = "FuzzGenMatcherCase \"" ++ name ++ "\" (" ++ show iters ++ " iterations)"
 
 data TestResultTree where
   ResultNode :: String -> [TestResultTree] -> TestResultTree

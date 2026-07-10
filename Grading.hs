@@ -29,11 +29,9 @@ gradeTreeFrom (Describe policy name children) outs =
       AllPass      -> and passed
       MajorityPass -> 2 * length (filter id passed) >= length passed
       AnyPass      -> or passed
-    grades = [g | Grade g <- map resultGrade gradedChildren]
     totalGrade
-      | null grades                     = Grade 0.0
-      | all isGradedLeaf gradedChildren = Grade (sum grades)
-      | otherwise                       = Grade (sum grades / fromIntegral (length grades))
+      | not allPass = Grade 0.0
+      | otherwise   = aggregateGrade gradedChildren
 gradeTreeFrom (Test weight tc) (o : rest) =
   (GradedLeaf (caseName tc) weight o grade, rest)
   where
@@ -43,8 +41,28 @@ gradeTreeFrom (Test weight tc) (o : rest) =
 gradeTreeFrom (Test weight tc) [] =
   (GradedLeaf (caseName tc) weight (TestFail "internal error: no outcome") (Grade 0.0), [])
 
+aggregateGrade :: [GradedResult] -> Grade
+aggregateGrade children
+  | null grades               = Grade 0.0
+  | all isGradedLeaf children = Grade (sum grades)
+  | otherwise                 = Grade (sum grades / fromIntegral (length grades))
+  where
+    grades = [g | Grade g <- map resultGrade children]
+
+
+passingGrade :: Double
+passingGrade = 50.0
+
+
+applyRootVerdict :: GradedResult -> GradedResult
+applyRootVerdict (GradedNode name _ _ children) =
+  GradedNode name (Grade total) (total >= passingGrade) children
+  where
+    Grade total = aggregateGrade children
+applyRootVerdict leaf = leaf
+
 gradeTree :: TestTree -> GradedResult
-gradeTree tree = fst (gradeTreeFrom tree outcomes)
+gradeTree tree = applyRootVerdict (fst (gradeTreeFrom tree outcomes))
   where
     outcomes = map (\(TestLeaf _ tc) -> runTestCase tc) (collectLeaves tree)
 
@@ -151,7 +169,7 @@ gradeSummaryTable result =
 gradeAndPrint :: TestTree -> IO ()
 gradeAndPrint tree = do
   outcomes <- runLeavesWithProgress (collectLeaves tree)
-  let (result, _) = gradeTreeFrom tree outcomes
+  let result = applyRootVerdict (fst (gradeTreeFrom tree outcomes))
   printFinalGrade (resultGrade result) result
   putStrLn (renderSuiteHeader 0 "Detailed Results")
   putStrLn ""

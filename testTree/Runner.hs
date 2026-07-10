@@ -12,7 +12,7 @@ import Random.Core qualified as Rand
 import PrettyPrinting.Renders
 import TestTree.Types
 
-{-# NOINLINE runTestCase #-}
+-- {-# NOINLINE runTestCase #-}
 runTestCase :: TestCase -> TestOutcome
 runTestCase tc = unsafePerformIO $ handle exceptionHandler $ do
   result <- timeout 2000000 (evaluate (force (runTestCasePure tc)))
@@ -31,41 +31,34 @@ runTestCasePure (UnitCase _ m x) =
   in if ok then TestPass expl else TestFail expl
 
 runTestCasePure (FuzzCase name matcher shrinker iters) =
-  let loop i prng
-        | i == iters = TestPass ("All " ++ show iters ++ " cases passed")
-        | otherwise =
-            let (x, prng') = Rand.runRandom (Rand.arbitrary ()) prng
-            in if matches matcher x
-                 then loop (i + 1) prng'
-                 else
-                   let (maybeMin, logs) = runWriter (assertThenShrinkRaw x matcher shrinker)
-                       rendered = renderLogs logs
-                       header = case maybeMin of
-                         Nothing -> "Initial failure reported but matched after shrinking (unexpected)"
-                         Just minimal -> "Found counterexample; minimal = " ++ show minimal
-                       info = "Fuzz failure at iteration " ++ show i ++ " of " ++ show iters ++ " with input " ++ show x
-                       body = unlines (map ("  " ++) rendered)
-                   in TestFail (header ++ "\n" ++ info ++ "\n" ++ body)
-  in loop 0 (Rand.PRNG_Xor Rand.seedXor)
+  runFuzzLoop matcher (Rand.arbitrary ()) shrinker iters
 
 runTestCasePure (FuzzGenCase name generator prop iters) =
-  let pm = PredMatcher {predFn = prop, predName = "property"}
-      loop i prng
-        | i == iters = TestPass ("All " ++ show iters ++ " cases passed")
-        | otherwise =
-            let (x, prng') = Rand.runRandom (genA generator) prng
-            in if matches pm x
-                 then loop (i + 1) prng'
-                 else
-                   let (maybeMin, logs) = runWriter (assertThenShrinkRaw x pm (shrinkA generator))
-                       rendered = renderLogs logs
-                       header = case maybeMin of
-                         Nothing -> "Initial failure reported but matched after shrinking (unexpected)"
-                         Just minimal -> "Found counterexample; minimal = " ++ show minimal
-                       info = "Fuzz failure at iteration " ++ show i ++ " of " ++ show iters ++ " with input " ++ show x
-                       body = unlines (map ("  " ++) rendered)
-                   in TestFail (header ++ "\n" ++ info ++ "\n" ++ body)
-  in loop 0 (Rand.PRNG_Xor Rand.seedXor)
+  runFuzzLoop (PredMatcher {predFn = prop, predName = "property"}) (genA generator) (shrinkA generator) iters
+
+runTestCasePure (FuzzGenMatcherCase name generator matcher iters) =
+  runFuzzLoop matcher (genA generator) (shrinkA generator) iters
+
+runFuzzLoop :: (Matchable m a, Show a, NFData a) => m -> Rand.Gen a -> (a -> [a]) -> Int -> TestOutcome
+runFuzzLoop matcher gen shrinker iters = loop 0 (Rand.PRNG_Xor Rand.seedXor)
+  where
+    loop i prng
+      | i == iters = TestPass ("All " ++ show iters ++ " cases passed")
+      | otherwise =
+          let (x, prng') = Rand.runRandom gen prng
+          in if matches matcher x
+               then loop (i + 1) prng'
+               else
+                 let (maybeMin, logs) = runWriter (assertThenShrinkRaw x matcher shrinker)
+                     rendered = renderLogs logs
+                     header = case maybeMin of
+                       Nothing -> "Initial failure reported but matched after shrinking (unexpected)"
+                       Just minimal ->
+                         "Found counterexample; minimal = " ++ show minimal
+                           ++ " -- " ++ explainMatch matcher minimal
+                     info = "Fuzz failure at iteration " ++ show i ++ " of " ++ show iters ++ " with input " ++ show x
+                     body = unlines (map ("  " ++) rendered)
+                 in TestFail (header ++ "\n" ++ info ++ "\n" ++ body)
 
 
 data TestLeaf = TestLeaf Double TestCase

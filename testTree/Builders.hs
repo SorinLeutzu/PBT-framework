@@ -20,3 +20,6 @@ fromArbitrary = Generator {genA = Rand.arbitrary (), shrinkA = Shrink.shrink}
 
 fuzzGen :: forall a. (Show a, NFData a) => Double -> String -> Generator a -> (a -> Bool) -> Int -> TestTree
 fuzzGen weight label generator prop n = Test weight (FuzzGenCase label generator prop n)
+
+fuzzGenWith :: forall a m. (Show a, Matchable m a, NFData a) => Double -> String -> Generator a -> m -> Int -> TestTree
+fuzzGenWith weight label generator matcher n = Test weight (FuzzGenMatcherCase label generator matcher n)

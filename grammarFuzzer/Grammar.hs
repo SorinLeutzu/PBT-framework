@@ -54,7 +54,7 @@ main' :: IO ()
 main' = do
   let prng = PRNG_Xor seedXor
   let startingTree = Leaf (startingPoint someGrammar) []
-  let newTree = runRandom prng (replaceLeafWithExpansionRandom startingTree someGrammar)
+  let newTree = evalRandom (replaceLeafWithExpansionRandom startingTree someGrammar) prng
   putStrLn $ "New tree is " ++ show newTree
 
 
@@ -62,7 +62,7 @@ main'' :: IO()
 main'' = do
   let prng = PRNG_Xor seedXor
   let startingTree = Leaf (startingPoint someGrammar) []
-  let newTree = runRandom prng (applyRandomExpansions 10 startingTree someGrammar)
+  let newTree = evalRandom (applyRandomExpansions 10 startingTree someGrammar) prng
   putStrLn $ "New tree is " ++ show newTree
   putStrLn $ "Pretty print "
   putStrLn $ prettyPrint newTree
@@ -101,4 +101,4 @@ instance Arbitrary GrammarFuzzedString (Grammar,Int,Int) where
   arbitrary (grammar, minimumNonTerminals, randomExpansions) = nextGrammarFuzzedString (Grammar' grammar minimumNonTerminals randomExpansions)
 
 instance Shrinkable GrammarFuzzedString where
-  shrink (GrammarFuzzedString s) = map GrammarFuzzedString (shrink s)
+  shrink s = [s]

@@ -25,14 +25,14 @@ constructParseTree (Grammar' grammar minNT nRandom) =
         let expandables = getExpandableNodes tree
         in if null expandables
            then (tree, prng)
-           else let (newTree, newPRNG) = execRandom prng (replaceLeafWithNonTerminatingExpansionRandom tree grammar)
+           else let (newTree, newPRNG) = runRandom (replaceLeafWithNonTerminatingExpansionRandom tree grammar) prng
                 in phaseRandom newPRNG newTree (k - 1)
 
     phaseMinimum prng tree =
         let expandables = getExpandableNodes tree
         in if null expandables
            then tree
-           else let (newTree, newPRNG) = execRandom prng (replaceMinimumCostLeafWithExpansionRandom tree grammar)
+           else let (newTree, newPRNG) = runRandom (replaceMinimumCostLeafWithExpansionRandom tree grammar) prng
                 in phaseMinimum newPRNG newTree
 
 
