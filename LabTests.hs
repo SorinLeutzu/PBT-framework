@@ -4,7 +4,7 @@ import Lab
 import TestTree
 import Grading
 import Matchers.Core
-import Data.List (intercalate)
+import Data.List (intercalate, isSubsequenceOf)
 import Random.Core qualified as Rand
 import Shrinking.Core qualified as Shrink
 import GrammarFuzzer.GrammarDefinitions
@@ -408,7 +408,7 @@ labTree =
 labTree2 :: TestTree
 labTree2 =
   group AnyPass "Haskell Lab Exam (mixed grading policies)"
-    [ group AllPass "Exercise 1: meanEven [AllPass]"
+    [ group AnyPass "Exercise 1: meanEven [AnyPass]"
         [ testCase 25.0
             "meanEven [2,4,6]"
             MeanEvenMatcher
@@ -505,3 +505,98 @@ main2 :: IO ()
 main2 = do
   _ <- setupTerminalWithChcp
   gradeAndPrint labTree2
+
+-- ex 2 using composite matchers
+
+data OutputHasDuplicates = OutputHasDuplicates
+
+instance Matcher OutputHasDuplicates where
+  describe _ _ = "produce an output that still contains duplicated elements"
+
+instance (Eq a, Show a) => Matchable OutputHasDuplicates [a] where
+  matches _ xs = hasDup (unique xs)
+    where
+      hasDup []     = False
+      hasDup (y:ys) = y `elem` ys || hasDup ys
+
+data KeepsAllInputElements = KeepsAllInputElements
+
+instance Matcher KeepsAllInputElements where
+  describe _ _ = "keep every element of the input"
+
+instance (Eq a, Show a) => Matchable KeepsAllInputElements [a] where
+  matches _ xs = all (`elem` unique xs) xs
+
+data InventsNoElements = InventsNoElements
+
+instance Matcher InventsNoElements where
+  describe _ _ = "output only elements that appear in the input"
+
+instance (Eq a, Show a) => Matchable InventsNoElements [a] where
+  matches _ xs = all (`elem` xs) (unique xs)
+
+data PreservesInputOrder = PreservesInputOrder
+
+instance Matcher PreservesInputOrder where
+  describe _ _ = "output the elements in the order they appear in the input"
+
+instance (Eq a, Show a) => Matchable PreservesInputOrder [a] where
+  matches _ xs = unique xs `isSubsequenceOf` xs
+
+data EmptyInput = EmptyInput
+
+instance Matcher EmptyInput where
+  describe _ _ = "receive an empty input"
+
+instance (Eq a, Show a) => Matchable EmptyInput [a] where
+  matches _ xs = null xs
+
+data EmptyOutput = EmptyOutput
+
+instance Matcher EmptyOutput where
+  describe _ _ = "produce an empty output"
+
+instance (Eq a, Show a) => Matchable EmptyOutput [a] where
+  matches _ xs = null (unique xs)
+
+
+uniqueProperties :: (Eq a, Show a) => Composite [a]
+uniqueProperties = AllOf
+  [ NotOf (One (AnyMatcher OutputHasDuplicates))
+  , One (AnyMatcher KeepsAllInputElements)
+  , One (AnyMatcher InventsNoElements)
+  , One (AnyMatcher PreservesInputOrder)
+  , AnyOf
+      [ AllOf [ One (AnyMatcher EmptyInput)
+              , One (AnyMatcher EmptyOutput) ]
+      , AllOf [ NotOf (One (AnyMatcher EmptyInput))
+              , NotOf (One (AnyMatcher EmptyOutput)) ]
+      ]
+  ]
+
+labTree3 :: TestTree
+labTree3 =
+  group AllPass "Exercise 2: unique (composite matchers)"
+    [ testCase 20.0
+        "unique [1,2,1,3,2] satisfies all unique-properties"
+        (uniqueProperties :: Composite [Int])
+        ([1, 2, 1, 3, 2] :: [Int])
+    , testCase 20.0
+        "unique \"abcabc\" satisfies all unique-properties"
+        (uniqueProperties :: Composite String)
+        "abcabc"
+    , testCase 10.0
+        "unique [] satisfies all unique-properties"
+        (uniqueProperties :: Composite [Int])
+        ([] :: [Int])
+    , fuzzGenWith 50.0
+        "random small-int lists satisfy all unique-properties"
+        smallIntListGen
+        (uniqueProperties :: Composite [Int])
+        200
+    ]
+
+main3 :: IO ()
+main3 = do
+  _ <- setupTerminalWithChcp
+  gradeAndPrint labTree3
